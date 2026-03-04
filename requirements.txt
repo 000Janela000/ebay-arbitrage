@@ -5,7 +5,7 @@ aiosqlite
 httpx
 beautifulsoup4
 lxml
-playwright
+cloudscraper
 python-dotenv
 pydantic-settings
 python-multipart
