@@ -376,14 +376,18 @@ async def _run_refresh(job_id: str, category_ids: list[str]):
             _jobs[job_id] = {"status": "error", "progress": 0, "message": str(e), "scraper_status": {}}
             return
 
-        for cat_id in category_ids:
-            _jobs[job_id]["message"] = f"Fetching eBay auctions for category {cat_id}..."
+        cat_names = {v: k for k, v in CATEGORY_MAP.items()}
+        for cat_idx, cat_id in enumerate(category_ids):
+            cat_name = cat_names.get(cat_id, cat_id)
+            _jobs[job_id]["message"] = f"[{cat_idx+1}/{total_cats}] Fetching eBay auctions for {cat_name}..."
             _jobs[job_id]["progress"] = int((processed / max(total_cats * 3, 1)) * 100)
+            print(f"[refresh] [{cat_idx+1}/{total_cats}] Fetching eBay auctions for {cat_name} (cat_id={cat_id})...")
 
             try:
                 raw_items = await search_auction_items(cat_id, limit=50)
+                print(f"[refresh]   Found {len(raw_items)} raw auction items")
             except Exception as e:
-                print(f"[refresh] eBay fetch failed for {cat_id}: {e}")
+                print(f"[refresh] eBay fetch failed for {cat_name}: {e}")
                 processed += 3
                 continue
 
@@ -397,6 +401,7 @@ async def _run_refresh(job_id: str, category_ids: list[str]):
                 if ends_naive > now:
                     valid_items.append(parsed)
 
+            print(f"[refresh]   {len(valid_items)} items still active (not expired)")
             processed += 1
             _jobs[job_id]["progress"] = int((processed / max(total_cats * 3, 1)) * 100)
 
@@ -424,11 +429,14 @@ async def _run_refresh(job_id: str, category_ids: list[str]):
                 for item, _ in item_objs:
                     await db.refresh(item)
 
+            print(f"[refresh]   Saved {len(valid_items)} auction items to DB")
             processed += 1
             _jobs[job_id]["progress"] = int((processed / max(total_cats * 3, 1)) * 100)
-            _jobs[job_id]["message"] = f"Scraping Georgian prices for {len(valid_items)} items..."
+            _jobs[job_id]["message"] = f"[{cat_idx+1}/{total_cats}] Estimating prices & scraping Georgian data for {len(valid_items)} items..."
+            print(f"[refresh]   Estimating prices & scraping Georgian data for {len(valid_items)} items...")
 
-            for parsed in valid_items:
+            items_with_geo = 0
+            for item_idx, parsed in enumerate(valid_items):
                 try:
                     async with AsyncSessionLocal() as db:
                         res = await db.execute(
@@ -481,6 +489,8 @@ async def _run_refresh(job_id: str, category_ids: list[str]):
                         )
 
                         good_listings = [gl for gl in geo_listings if gl.similarity_score >= 0.3]
+                        if good_listings:
+                            items_with_geo += 1
                         geo_prices_gel = [gl.price_gel for gl in good_listings]
                         geo_median_gel = statistics.median(geo_prices_gel) if geo_prices_gel else None
                         geo_median_usd = (geo_median_gel / usd_gel) if geo_median_gel and usd_gel else None
@@ -535,8 +545,9 @@ async def _run_refresh(job_id: str, category_ids: list[str]):
 
                         await db.commit()
                 except Exception as e:
-                    print(f"[refresh] Item processing failed: {e}")
+                    print(f"[refresh] Item processing failed ({parsed.get('title', '?')[:40]}): {e}")
 
+            print(f"[refresh]   Done with {cat_name}: {len(valid_items)} items processed, {items_with_geo} with Georgian price data")
             processed += 1
             _jobs[job_id]["progress"] = int((processed / max(total_cats * 3, 1)) * 100)
 

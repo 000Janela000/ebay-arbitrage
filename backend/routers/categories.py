@@ -165,20 +165,29 @@ async def _run_analysis(job_id: str):
 
     try:
         for i, (name, cat_id) in enumerate(categories):
-            _jobs[job_id]["message"] = f"Analyzing {name}..."
-            _jobs[job_id]["progress"] = int((i / total) * 100)
+            pct = int((i / total) * 100)
+            _jobs[job_id]["message"] = f"[{i+1}/{total}] Analyzing {name}..."
+            _jobs[job_id]["progress"] = pct
+            print(f"[categories] [{i+1}/{total}] Analyzing {name} (cat_id={cat_id})...")
 
             try:
+                print(f"[categories]   Fetching eBay BIN prices for {name}...")
                 ebay_prices = await _sample_ebay_prices_for_category(cat_id, name)
                 avg_ebay = statistics.median(ebay_prices) if len(ebay_prices) >= 3 else None
+                print(f"[categories]   eBay: {len(ebay_prices)} prices, median=${avg_ebay:.2f}" if avg_ebay else f"[categories]   eBay: {len(ebay_prices)} prices (insufficient for median)")
 
+                print(f"[categories]   Fetching Georgian marketplace prices for {name}...")
                 geo_prices_gel, usd_gel = await _sample_georgian_prices_for_category(cat_id)
                 avg_geo_gel = statistics.median(geo_prices_gel) if len(geo_prices_gel) >= 3 else None
                 avg_geo_usd = (avg_geo_gel / usd_gel) if avg_geo_gel and usd_gel else None
+                print(f"[categories]   Georgian: {len(geo_prices_gel)} prices, median={avg_geo_gel:.0f} GEL" if avg_geo_gel else f"[categories]   Georgian: {len(geo_prices_gel)} prices (insufficient for median)")
 
                 margin = None
                 if avg_ebay and avg_geo_usd:
                     margin = (avg_geo_usd - avg_ebay) / avg_ebay * 100
+                    print(f"[categories]   Estimated margin: {margin:.1f}%")
+                else:
+                    print(f"[categories]   Cannot calculate margin (missing data)")
 
                 async with AsyncSessionLocal() as db:
                     res = await db.execute(select(Category).where(Category.ebay_category_id == cat_id))
@@ -209,6 +218,7 @@ async def _run_analysis(job_id: str):
 
             await asyncio.sleep(0.5)
 
+        print(f"[categories] Analysis complete for all {total} categories")
         _jobs[job_id] = {"status": "done", "progress": 100, "message": "Analysis complete"}
     except Exception as e:
         _jobs[job_id] = {"status": "error", "progress": 0, "message": str(e)}
