@@ -455,7 +455,8 @@ async def _run_refresh(job_id: str, category_ids: list[str]):
                         # Georgian scraping
                         geo_query = " ".join(item.title.split()[:5])
                         geo_listings, usd_gel, scraper_status = await scrape_all_platforms(
-                            geo_query, ebay_price_usd=item.current_bid_usd
+                            geo_query, ebay_price_usd=item.current_bid_usd,
+                            ebay_category_id=cat_id,
                         )
 
                         # Track scraper health

@@ -65,7 +65,7 @@ class JobStatus(BaseModel):
 
 @router.get("", response_model=list[CategoryDTO])
 async def list_categories(
-    sort_by: str = Query("avg_profit_margin_pct", regex="^(avg_profit_margin_pct|name|total_active_auctions)$"),
+    sort_by: str = Query("avg_profit_margin_pct", pattern="^(avg_profit_margin_pct|name|total_active_auctions)$"),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(select(Category))
@@ -138,24 +138,47 @@ async def _sample_georgian_prices_for_category(cat_id: str) -> tuple[list[float]
     """
     Scrape a sample of Georgian listings using category representative queries.
     Returns (gel_prices, usd_gel_rate).  Rate may be None if unavailable.
-    """
-    queries = CATEGORY_SAMPLE_QUERIES.get(cat_id, [])[:2]  # limit Georgian scrapes
-    all_gel_prices: list[float] = []
 
-    # Fetch rate upfront — no hardcoded fallback
+    Two-pass strategy:
+      1. Search with keyword + CatID — use similarity >= 0.15 (loose, since category already filters)
+      2. If too few results, browse category without keyword to get category-level pricing
+    """
+    from backend.scrapers.mymarket_scraper import MymarketScraper, EBAY_TO_MYMARKET_CAT
+
+    queries = CATEGORY_SAMPLE_QUERIES.get(cat_id, [])[:2]
+    all_gel_prices: list[float] = []
+    mymarket_cats = EBAY_TO_MYMARKET_CAT.get(cat_id)
+
+    # Fetch rate upfront
     try:
         usd_gel: Optional[float] = await get_usd_gel_rate()
     except RuntimeError:
         usd_gel = None
 
+    # Pass 1: keyword search with category filter (loose similarity threshold)
     for q in queries:
         try:
-            listings, rate, _ = await scrape_all_platforms(q, ebay_price_usd=0)
-            usd_gel = rate  # use freshest rate from scraper
-            good = [l.price_gel for l in listings if l.similarity_score >= 0.3 and l.price_gel > 0]
+            listings, rate, _ = await scrape_all_platforms(q, ebay_price_usd=0, ebay_category_id=cat_id)
+            usd_gel = rate
+            good = [l.price_gel for l in listings if l.similarity_score >= 0.15 and l.price_gel > 0]
             all_gel_prices.extend(good)
         except Exception:
             pass
+
+    # Pass 2: if still too few prices, browse category directly (no keyword)
+    # This gives us category-level pricing even when English keywords don't match Georgian titles
+    if len(all_gel_prices) < 3 and mymarket_cats:
+        print(f"[categories]   Pass 2: browsing mymarket category directly (only {len(all_gel_prices)} prices from keyword search)")
+        try:
+            scraper = MymarketScraper(mymarket_cat_ids=mymarket_cats)
+            # Empty query + CatID = browse category listings
+            browse_results = await scraper.search("")
+            browse_prices = [r.price_gel for r in browse_results if r.price_gel > 0]
+            all_gel_prices.extend(browse_prices)
+            print(f"[categories]   Pass 2: got {len(browse_prices)} prices from category browse")
+        except Exception as e:
+            print(f"[categories]   Pass 2 failed: {e}")
+
     return all_gel_prices, usd_gel
 
 
