@@ -44,11 +44,13 @@ export interface AuctionOpportunity {
   georgian_median_price_usd: number | null
   georgian_listing_count: number
   profit_margin_pct: number | null
+  profit_usd: number | null
   profit_gel: number | null
   opportunity_score: number
   margin_score: number
   urgency_score: number
   confidence_score: number
+  demand_score: number | null
   competition_score: number
   ebay_category_id: string
   has_georgian_data: boolean
@@ -84,6 +86,50 @@ export interface JobStatus {
   progress: number
   message: string
   scraper_status: Record<string, boolean>
+}
+
+// Category tree types
+export interface CategoryNode {
+  ebay_category_id: string
+  name: string
+  child_count: number
+  is_leaf: boolean
+  is_tracked: boolean
+  avg_profit_margin_pct: number | null
+  last_analyzed_at: string | null
+}
+
+export interface CategoryBreadcrumb {
+  ebay_category_id: string
+  name: string
+}
+
+export interface CategorySearchResult {
+  ebay_category_id: string
+  name: string
+  breadcrumb_path: string
+  is_leaf: boolean
+  is_tracked: boolean
+  avg_profit_margin_pct: number | null
+}
+
+export interface TrackedCategory {
+  ebay_category_id: string
+  name: string
+  breadcrumb_path: string
+  is_leaf: boolean
+  avg_ebay_sold_usd: number | null
+  avg_georgian_price_usd: number | null
+  avg_profit_margin_pct: number | null
+  avg_weight_kg: number | null
+  total_active_auctions: number
+  last_analyzed_at: string | null
+}
+
+export interface TreeMeta {
+  tree_version: string | null
+  last_fetched_at: string | null
+  total_categories: number | null
 }
 
 export interface AuctionDetail {
@@ -154,6 +200,20 @@ export const fetchJobStatus = (jobId: string) =>
   client.get<JobStatus>('/categories/analyze/status', { params: { job_id: jobId } }).then(r => r.data)
 export const fetchRefreshStatus = (jobId: string) =>
   client.get<JobStatus>('/auctions/refresh/status', { params: { job_id: jobId } }).then(r => r.data)
+
+// Category tree fetch functions
+export const fetchCategoryRoots = () =>
+  client.get<CategoryNode[]>('/categories/tree/roots').then(r => r.data)
+export const fetchCategoryChildren = (parentId: string) =>
+  client.get<CategoryNode[]>(`/categories/tree/${parentId}/children`).then(r => r.data)
+export const fetchCategoryBreadcrumb = (categoryId: string) =>
+  client.get<CategoryBreadcrumb[]>(`/categories/tree/${categoryId}/breadcrumb`).then(r => r.data)
+export const fetchCategorySearch = (q: string) =>
+  client.get<CategorySearchResult[]>('/categories/search', { params: { q } }).then(r => r.data)
+export const fetchTrackedCategories = () =>
+  client.get<TrackedCategory[]>('/categories/tracked').then(r => r.data)
+export const fetchTreeMeta = () =>
+  client.get<TreeMeta>('/categories/tree/meta').then(r => r.data)
 
 // ─── React Query hooks ────────────────────────────────────────────────────────
 
@@ -232,6 +292,121 @@ export function useValidateEbay() {
 export function useStartCategoryAnalysis() {
   return useMutation({
     mutationFn: () => client.post<{ job_id: string }>('/categories/analyze').then(r => r.data),
+  })
+}
+
+export function useStartSingleCategoryAnalysis() {
+  return useMutation({
+    mutationFn: (categoryId: string) =>
+      client.post<{ job_id: string }>(`/categories/${categoryId}/analyze`).then(r => r.data),
+  })
+}
+
+// Category tree hooks
+export function useCategoryChildren(parentId: string | null) {
+  return useQuery({
+    queryKey: ['category-children', parentId],
+    queryFn: () => parentId ? fetchCategoryChildren(parentId) : fetchCategoryRoots(),
+  })
+}
+
+export function useCategoryBreadcrumb(categoryId: string | null) {
+  return useQuery({
+    queryKey: ['category-breadcrumb', categoryId],
+    queryFn: () => fetchCategoryBreadcrumb(categoryId!),
+    enabled: !!categoryId,
+  })
+}
+
+export function useCategorySearch(query: string) {
+  return useQuery({
+    queryKey: ['category-search', query],
+    queryFn: () => fetchCategorySearch(query),
+    enabled: query.length >= 2,
+  })
+}
+
+export function useTrackedCategories() {
+  return useQuery({
+    queryKey: ['tracked-categories'],
+    queryFn: fetchTrackedCategories,
+  })
+}
+
+export function useTreeMeta() {
+  return useQuery({
+    queryKey: ['tree-meta'],
+    queryFn: fetchTreeMeta,
+  })
+}
+
+export function useTrackCategory() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (categoryId: string) =>
+      client.post(`/categories/${categoryId}/track`).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tracked-categories'] })
+      qc.invalidateQueries({ queryKey: ['category-children'] })
+      qc.invalidateQueries({ queryKey: ['category-search'] })
+      qc.invalidateQueries({ queryKey: ['categories'] })
+    },
+  })
+}
+
+export function useUntrackCategory() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (categoryId: string) =>
+      client.delete(`/categories/${categoryId}/track`).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tracked-categories'] })
+      qc.invalidateQueries({ queryKey: ['category-children'] })
+      qc.invalidateQueries({ queryKey: ['category-search'] })
+      qc.invalidateQueries({ queryKey: ['categories'] })
+    },
+  })
+}
+
+export function useSyncCategoryTree() {
+  return useMutation({
+    mutationFn: () => client.post<{ job_id: string }>('/categories/sync-tree').then(r => r.data),
+  })
+}
+
+export interface DiscoverPreview {
+  category_id: string
+  category_name: string
+  leaf_count: number
+  api_calls_needed: number
+  budget_pct: number
+}
+
+export const fetchDiscoverPreview = (categoryId: string) =>
+  client.get<DiscoverPreview>(`/categories/${categoryId}/discover/preview`).then(r => r.data)
+
+export function useDiscoverPreview(categoryId: string | null) {
+  return useQuery({
+    queryKey: ['discover-preview', categoryId],
+    queryFn: () => fetchDiscoverPreview(categoryId!),
+    enabled: !!categoryId,
+  })
+}
+
+export function useDiscoverCategory() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ categoryId, maxCategories }: { categoryId: string; maxCategories?: number }) =>
+      client.post<{ job_id: string; leaf_count: number }>(
+        `/categories/${categoryId}/discover`,
+        null,
+        { params: maxCategories ? { max_categories: maxCategories } : {} },
+      ).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tracked-categories'] })
+      qc.invalidateQueries({ queryKey: ['category-children'] })
+      qc.invalidateQueries({ queryKey: ['categories'] })
+    },
   })
 }
 

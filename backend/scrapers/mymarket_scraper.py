@@ -20,23 +20,6 @@ from backend.scrapers.base_scraper import BaseScraper, GeorgianListing
 API_URL = "https://api.mymarket.ge/api/ka/products"
 BASE_URL = "https://www.mymarket.ge"
 
-# Mapping from eBay category IDs to mymarket CatIDs.
-# Some eBay categories map to multiple mymarket categories for broader coverage.
-EBAY_TO_MYMARKET_CAT: dict[str, list[int]] = {
-    "9355":   [69],              # Cell Phones → Mobile Phone
-    "177":    [53],              # Laptops → Notebook
-    "171485": [4517],            # Tablets → Tablet
-    "139971": [164, 4553],       # Game Consoles → Gaming console + controllers
-    "178893": [978],             # Smartwatches → Smart Watch
-    "625":    [71],              # Cameras → Photo camera
-    "293":    [999, 529, 82],    # Consumer Electronics → Electronics + Earphone + Speaker
-    "11450":  [11],              # Clothing → Clothing and Accessories
-    "11700":  [1066],            # Home & Garden → Home and garden
-    "267":    [42],              # Books → Books
-    "619":    [17],              # Musical Instruments → Music Instruments
-    "220":    [65],              # Toys → Toys
-}
-
 
 class MymarketScraper(BaseScraper):
     platform = "mymarket"
@@ -124,6 +107,15 @@ class MymarketScraper(BaseScraper):
         combined_text = f"{title_ka} {descr[:200]}"
         similarity = self._calc_similarity_with_description(query, combined_text)
 
+        # Extract demand signals
+        view_count = None
+        try:
+            views_raw = p.get("views")
+            if views_raw is not None:
+                view_count = int(views_raw)
+        except (ValueError, TypeError):
+            pass
+
         return GeorgianListing(
             platform=self.platform,
             title=display_title,
@@ -132,6 +124,7 @@ class MymarketScraper(BaseScraper):
             image_url=image_url,
             similarity_score=similarity,
             low_confidence=similarity < 0.2,
+            view_count=view_count,
         )
 
     @staticmethod

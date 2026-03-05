@@ -22,7 +22,9 @@ def _sort_column(sort_by: str, order: str):
     col_map = {
         "opportunity_score": Opportunity.opportunity_score,
         "profit_margin_pct": Opportunity.profit_margin_pct,
+        "demand_score": Opportunity.demand_score,
         "current_bid_usd": Opportunity.current_bid_usd,
+        "total_landed_cost_usd": Opportunity.total_landed_cost_usd,
         "ends_at": Opportunity.ends_at,
     }
     col = col_map.get(sort_by, Opportunity.opportunity_score)
@@ -37,7 +39,10 @@ async def list_opportunities(
     sort_by: str = Query("opportunity_score"),
     order: str = Query("desc"),
     min_profit_pct: Optional[float] = Query(None),
+    min_profit_usd: Optional[float] = Query(None),
     max_bid_usd: Optional[float] = Query(None),
+    min_budget_usd: Optional[float] = Query(None),
+    max_budget_usd: Optional[float] = Query(None),
     category_id: Optional[str] = Query(None),
     has_georgian_data: Optional[bool] = Query(None),
     limit: int = Query(100, le=500),
@@ -50,6 +55,12 @@ async def list_opportunities(
     conditions = [Opportunity.ends_at > now]
     if min_profit_pct is not None:
         conditions.append(Opportunity.profit_margin_pct >= min_profit_pct)
+    if min_profit_usd is not None:
+        conditions.append(Opportunity.profit_usd >= min_profit_usd)
+    if min_budget_usd is not None:
+        conditions.append(Opportunity.total_landed_cost_usd >= min_budget_usd)
+    if max_budget_usd is not None:
+        conditions.append(Opportunity.total_landed_cost_usd <= max_budget_usd)
     if has_georgian_data is True:
         conditions.append(Opportunity.georgian_listing_count > 0)
     elif has_georgian_data is False:
@@ -112,11 +123,13 @@ async def list_opportunities(
             "georgian_median_price_usd": opp.georgian_median_price_usd,
             "georgian_listing_count": opp.georgian_listing_count,
             "profit_margin_pct": opp.profit_margin_pct,
+            "profit_usd": opp.profit_usd,
             "profit_gel": opp.profit_gel,
             "opportunity_score": opp.opportunity_score,
             "margin_score": opp.margin_score,
             "urgency_score": opp.urgency_score,
             "confidence_score": opp.confidence_score,
+            "demand_score": opp.demand_score,
             "competition_score": opp.competition_score,
             "ebay_category_id": item.ebay_category_id,
             "has_georgian_data": (opp.georgian_listing_count or 0) > 0,

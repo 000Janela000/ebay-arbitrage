@@ -1,12 +1,15 @@
 import { useState } from 'react'
-import { Bookmark, BookmarkCheck, Trash2 } from 'lucide-react'
+import { Bookmark, BookmarkCheck, Trash2, Crosshair } from 'lucide-react'
 import { clsx } from 'clsx'
 import { Category } from '../api/hooks'
 
 export interface Filters {
   categoryId: string
   minProfitPct: string
+  minProfitUsd: string
   maxBidUsd: string
+  minBudgetUsd: string
+  maxBudgetUsd: string
   sortBy: string
   order: string
   hasGeorgianData: boolean | null  // null = show all
@@ -28,7 +31,26 @@ const SORT_OPTIONS = [
   { value: 'opportunity_score', label: 'Score' },
   { value: 'ends_at', label: 'Ends Soon' },
   { value: 'profit_margin_pct', label: 'Profit %' },
+  { value: 'demand_score', label: 'Demand' },
   { value: 'current_bid_usd', label: 'Current Bid' },
+  { value: 'total_landed_cost_usd', label: 'Landed Cost' },
+]
+
+const BUILT_IN_PRESETS: Preset[] = [
+  {
+    name: 'Sniper ($40+ profit, ending soon)',
+    filters: {
+      categoryId: '',
+      minProfitPct: '',
+      minProfitUsd: '40',
+      maxBidUsd: '',
+      minBudgetUsd: '',
+      maxBudgetUsd: '100',
+      sortBy: 'ends_at',
+      order: 'asc',
+      hasGeorgianData: true,
+    },
+  },
 ]
 
 const PRESETS_KEY = 'ebay_arbitrage_filter_presets'
@@ -103,16 +125,38 @@ export default function FilterBar({ filters, onFilterChange, categories, totalCo
           />
         </div>
 
-        {/* Max bid */}
+        {/* Min profit USD */}
         <div className="flex items-center gap-2">
-          <label className="text-xs text-gray-500 whitespace-nowrap">Max Bid $</label>
+          <label className="text-xs text-gray-500 whitespace-nowrap">Min Profit $</label>
           <input
             type="number"
-            value={filters.maxBidUsd}
-            onChange={e => onFilterChange({ maxBidUsd: e.target.value })}
-            placeholder="Any"
+            value={filters.minProfitUsd}
+            onChange={e => onFilterChange({ minProfitUsd: e.target.value })}
+            placeholder="0"
+            step="5"
+            className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm w-20 font-mono"
+          />
+        </div>
+
+        {/* Budget (total landed cost) range */}
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-500 whitespace-nowrap">Budget $</label>
+          <input
+            type="number"
+            value={filters.minBudgetUsd}
+            onChange={e => onFilterChange({ minBudgetUsd: e.target.value })}
+            placeholder="Min"
             step="10"
-            className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm w-24 font-mono"
+            className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm w-20 font-mono"
+          />
+          <span className="text-gray-600 text-xs">–</span>
+          <input
+            type="number"
+            value={filters.maxBudgetUsd}
+            onChange={e => onFilterChange({ maxBudgetUsd: e.target.value })}
+            placeholder="Max"
+            step="10"
+            className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm w-20 font-mono"
           />
         </div>
 
@@ -171,7 +215,19 @@ export default function FilterBar({ filters, onFilterChange, categories, totalCo
               Presets{presets.length > 0 ? ` (${presets.length})` : ''}
             </button>
             {showPresets && (
-              <div className="absolute right-0 top-8 z-20 w-64 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-3 space-y-2">
+              <div className="absolute right-0 top-8 z-20 w-72 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-3 space-y-2">
+                {/* Built-in presets */}
+                {BUILT_IN_PRESETS.map((preset, i) => (
+                  <button
+                    key={`builtin-${i}`}
+                    onClick={() => handleLoadPreset(preset)}
+                    className="w-full text-left text-xs text-purple-300 hover:text-white px-2 py-1.5 rounded hover:bg-purple-900/30 flex items-center gap-1.5"
+                  >
+                    <Crosshair size={12} className="text-purple-400 shrink-0" />
+                    {preset.name}
+                  </button>
+                ))}
+                <div className="border-t border-gray-800" />
                 <p className="text-xs text-gray-400 font-medium">Saved Presets</p>
                 {presets.length === 0 && (
                   <p className="text-xs text-gray-600">No presets saved yet.</p>

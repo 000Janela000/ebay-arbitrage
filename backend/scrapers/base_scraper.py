@@ -17,6 +17,8 @@ class GeorgianListing:
     similarity_score: float = 0.0
     low_confidence: bool = False
     price_mismatch: bool = False   # True when Georgian price > 5× eBay price (separate from similarity)
+    view_count: Optional[int] = None
+    order_count: Optional[int] = None
 
 
 class BaseScraper(ABC):

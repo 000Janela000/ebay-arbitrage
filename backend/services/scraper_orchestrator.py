@@ -8,7 +8,8 @@ import statistics
 from typing import Optional
 
 from backend.scrapers.base_scraper import GeorgianListing
-from backend.scrapers.mymarket_scraper import MymarketScraper, EBAY_TO_MYMARKET_CAT
+from backend.scrapers.extra_scraper import ExtraScraper
+from backend.scrapers.mymarket_scraper import MymarketScraper
 from backend.scrapers.veli_store_scraper import VeliStoreScraper
 from backend.scrapers.zoomer_scraper import ZoomerScraper
 from backend.services.currency_service import get_usd_gel_rate
@@ -18,21 +19,35 @@ async def scrape_all_platforms(
     query: str,
     ebay_price_usd: float = 0.0,
     ebay_category_id: Optional[str] = None,
+    mymarket_cat_ids: Optional[list[int]] = None,
 ) -> tuple[list[GeorgianListing], float, dict[str, bool]]:
     """
     Run all scrapers in parallel.
+
+    mymarket_cat_ids takes precedence over ebay_category_id for mymarket filtering.
+    If ebay_category_id is provided but mymarket_cat_ids is not, resolves via tree.
+
     Returns:
       listings       — deduplicated, sorted by similarity
       usd_gel_rate   — exchange rate used
       scraper_status — {platform: succeeded_bool}
     """
-    # B5: run scrapers with a hard timeout to prevent refresh jobs hanging indefinitely
     usd_gel_rate = await get_usd_gel_rate()
+
+    # Resolve mymarket categories if not provided directly
+    resolved_cats = mymarket_cat_ids
+    if resolved_cats is None and ebay_category_id:
+        try:
+            from backend.services.category_tree_service import resolve_mymarket_cats
+            resolved_cats = await resolve_mymarket_cats(ebay_category_id)
+        except Exception:
+            resolved_cats = None
+
     try:
-        results = await asyncio.wait_for(_run_all_scrapers(query, ebay_category_id), timeout=30.0)
+        results = await asyncio.wait_for(_run_all_scrapers(query, resolved_cats), timeout=30.0)
     except asyncio.TimeoutError:
         print(f"[orchestrator] Scrapers timed out (30s) for query: {query!r}")
-        results = {"mymarket": (False, []), "veli": (False, []), "zoomer": (False, [])}
+        results = {"mymarket": (False, []), "extra": (False, []), "veli": (False, []), "zoomer": (False, [])}
 
     scraper_status: dict[str, bool] = {}
     all_listings: list[GeorgianListing] = []
@@ -57,10 +72,13 @@ async def scrape_all_platforms(
     return deduped, usd_gel_rate, scraper_status
 
 
-async def _run_all_scrapers(query: str, ebay_category_id: Optional[str] = None) -> dict[str, tuple[bool, list[GeorgianListing]]]:
-    mymarket_cats = EBAY_TO_MYMARKET_CAT.get(ebay_category_id) if ebay_category_id else None
+async def _run_all_scrapers(
+    query: str,
+    mymarket_cat_ids: Optional[list[int]] = None,
+) -> dict[str, tuple[bool, list[GeorgianListing]]]:
     scraper_map = {
-        "mymarket": MymarketScraper(mymarket_cat_ids=mymarket_cats),
+        "mymarket": MymarketScraper(mymarket_cat_ids=mymarket_cat_ids),
+        "extra": ExtraScraper(),
         "veli": VeliStoreScraper(),
         "zoomer": ZoomerScraper(),
     }

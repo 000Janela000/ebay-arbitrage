@@ -16,22 +16,6 @@ from backend.models import ApiUsage, Setting
 EBAY_DAILY_LIMIT = 5000
 EBAY_WARN_THRESHOLD = 200
 
-# Predefined category mapping: name → eBay category ID
-CATEGORY_MAP = {
-    "Cell Phones": "9355",
-    "Laptops": "177",
-    "Tablets": "171485",
-    "Game Consoles": "139971",
-    "Smartwatches": "178893",
-    "Cameras": "625",
-    "Consumer Electronics": "293",
-    "Clothing": "11450",
-    "Home & Garden": "11700",
-    "Books": "267",
-    "Musical Instruments": "619",
-    "Toys": "220",
-}
-
 
 class EbayTokenManager:
     _token: Optional[str] = None

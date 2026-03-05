@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install httpx python-dotenv --quiet)",
+      "Bash(pip install -r requirements.txt --quiet)",
+      "Bash(npm install)",
+      "WebFetch(domain:veli.store)",
+      "WebFetch(domain:www.mymarket.ge)",
+      "WebFetch(domain:zoomer.ge)",
+      "Bash(python:*)",
+      "Bash(pip install cloudscraper --quiet)",
+      "Bash(PYTHONIOENCODING=utf-8 python -c \":*)"
+    ]
+  }
+}

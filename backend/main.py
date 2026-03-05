@@ -10,11 +10,51 @@ from backend.database import create_tables
 async def lifespan(app: FastAPI):
     # Startup
     await create_tables()
+    await _run_schema_migrations()
     await _seed_default_settings()
+    await _maybe_sync_category_tree()
     await _init_playwright()
     yield
     # Shutdown
     await _close_playwright()
+
+
+async def _run_schema_migrations():
+    """Add columns that create_all won't add to existing tables."""
+    from sqlalchemy import text
+    from backend.database import engine
+
+    migrations = [
+        ("georgian_listings", "view_count", "ALTER TABLE georgian_listings ADD COLUMN view_count INTEGER"),
+        ("georgian_listings", "order_count", "ALTER TABLE georgian_listings ADD COLUMN order_count INTEGER"),
+        ("opportunities", "demand_score", "ALTER TABLE opportunities ADD COLUMN demand_score FLOAT"),
+    ]
+
+    async with engine.begin() as conn:
+        for table, column, sql in migrations:
+            try:
+                await conn.execute(text(sql))
+                print(f"[migration] Added {table}.{column}")
+            except Exception:
+                pass  # Column already exists
+
+
+async def _maybe_sync_category_tree():
+    """On first startup, fetch the eBay category tree and migrate legacy data."""
+    from backend.services.category_tree_service import (
+        is_tree_populated, sync_category_tree, migrate_legacy_categories,
+    )
+    try:
+        if not await is_tree_populated():
+            print("[startup] Category tree not found — fetching from eBay Taxonomy API...")
+            await sync_category_tree()
+            await migrate_legacy_categories()
+            print("[startup] Category tree synced and legacy data migrated")
+        else:
+            print("[startup] Category tree already populated")
+    except Exception as e:
+        print(f"[startup] Warning: Could not sync category tree: {e}")
+        print("[startup] The app will work but category browsing won't be available until tree is synced")
 
 
 async def _seed_default_settings():

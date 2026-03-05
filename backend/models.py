@@ -8,6 +8,7 @@ from backend.database import Base
 
 
 class Category(Base):
+    """Legacy category model — kept for migration only."""
     __tablename__ = "categories"
 
     ebay_category_id = Column(String, primary_key=True)
@@ -18,6 +19,49 @@ class Category(Base):
     avg_weight_kg = Column(Float)
     total_active_auctions = Column(Integer, default=0)
     last_analyzed_at = Column(DateTime)
+
+
+class EbayCategory(Base):
+    """eBay category tree node. Populated from Taxonomy API."""
+    __tablename__ = "ebay_categories"
+
+    ebay_category_id = Column(String, primary_key=True)
+    name = Column(String, nullable=False)
+    parent_id = Column(String, nullable=True)
+    level = Column(Integer, nullable=False, default=0)
+    is_leaf = Column(Boolean, default=False)
+
+    # Analysis data (populated on-demand)
+    avg_ebay_sold_usd = Column(Float)
+    avg_georgian_price_usd = Column(Float)
+    avg_profit_margin_pct = Column(Float)
+    avg_weight_kg = Column(Float)
+    total_active_auctions = Column(Integer, default=0)
+    last_analyzed_at = Column(DateTime)
+
+    # User tracking
+    is_tracked = Column(Boolean, default=False)
+
+    # Mymarket mapping (JSON array string, e.g. "[69, 70]"), nullable — inherits from parent
+    mymarket_cat_ids = Column(String, nullable=True)
+
+    # Default weight for this category (nullable — falls back to parent)
+    default_weight_kg = Column(Float, nullable=True)
+
+    __table_args__ = (
+        Index("idx_ebay_cat_parent", "parent_id"),
+        Index("idx_ebay_cat_tracked", "is_tracked"),
+    )
+
+
+class CategoryTreeMeta(Base):
+    """Tracks when the category tree was last fetched."""
+    __tablename__ = "category_tree_meta"
+
+    id = Column(Integer, primary_key=True, default=1)
+    tree_version = Column(String)
+    last_fetched_at = Column(DateTime)
+    total_categories = Column(Integer)
 
 
 class AuctionItem(Base):
@@ -78,6 +122,8 @@ class GeorgianListing(Base):
     image_url = Column(String)
     similarity_score = Column(Float)
     price_mismatch = Column(Boolean, default=False)  # True when Georgian price > 5× eBay price
+    view_count = Column(Integer, nullable=True)
+    order_count = Column(Integer, nullable=True)
     fetched_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     auction_item = relationship("AuctionItem", back_populates="georgian_listings")
@@ -108,6 +154,7 @@ class Opportunity(Base):
     urgency_score = Column(Float, nullable=False)
     confidence_score = Column(Float, nullable=False)
     competition_score = Column(Float, nullable=False)
+    demand_score = Column(Float, nullable=True)
     opportunity_score = Column(Float, nullable=False)
     gel_rate_used = Column(Float, nullable=False)
     vat_applied = Column(Boolean, default=False)

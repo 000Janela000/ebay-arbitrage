@@ -26,7 +26,8 @@ async def get_db():
 
 async def create_tables():
     from backend.models import (  # noqa: F401
-        Category, AuctionItem, PriceEstimate,
+        Category, EbayCategory, CategoryTreeMeta,
+        AuctionItem, PriceEstimate,
         GeorgianListing, Opportunity, CurrencyRate,
         ApiUsage, Setting,
     )

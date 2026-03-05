@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(PYTHONIOENCODING=utf-8 python -c \":*)",
+      "Bash(npx tsc --noEmit)",
+      "Bash(python:*)"
+    ]
+  }
+}

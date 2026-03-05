@@ -1,28 +1,20 @@
 """
-Default weight estimates (kg) per eBay category ID.
-Used when eBay item specifics don't include weight.
+Weight estimation with tree-based category fallback.
 """
-
-CATEGORY_DEFAULT_WEIGHTS: dict[str, float] = {
-    "9355": 0.2,    # Cell Phones
-    "177": 2.0,     # Laptops
-    "171485": 0.6,  # Tablets
-    "139971": 0.5,  # Game Consoles
-    "178893": 0.1,  # Smartwatches
-    "625": 0.8,     # Cameras
-    "293": 1.0,     # Consumer Electronics (generic)
-    "11450": 0.4,   # Clothing
-    "11700": 1.5,   # Home & Garden
-    "267": 0.3,     # Books
-    "619": 3.0,     # Musical Instruments
-    "220": 0.8,     # Toys
-}
 
 DEFAULT_WEIGHT_KG = 0.5
 
 
-def get_default_weight(category_id: str) -> float:
-    return CATEGORY_DEFAULT_WEIGHTS.get(category_id, DEFAULT_WEIGHT_KG)
+async def get_default_weight_async(category_id: str) -> float:
+    """Walk up the category tree to find the nearest default weight."""
+    try:
+        from backend.services.category_tree_service import resolve_default_weight
+        weight = await resolve_default_weight(category_id)
+        if weight is not None:
+            return weight
+    except Exception:
+        pass
+    return DEFAULT_WEIGHT_KG
 
 
 def resolve_weight(
@@ -31,16 +23,18 @@ def resolve_weight(
     category_id: str,
     user_override: float | None = None,
     db_default: float = DEFAULT_WEIGHT_KG,
+    category_weight: float | None = None,
 ) -> tuple[float, str]:
     """
     Returns (weight_kg, source) using fallback chain:
-    user_override → ebay_specifics → category_default → db_default
+    user_override → ebay_specifics → category_weight → db_default
+
+    category_weight should be pre-resolved by the caller via get_default_weight_async().
     """
     if user_override is not None:
         return user_override, "user_override"
     if item_weight and item_weight_source == "ebay_specifics":
         return item_weight, "ebay_specifics"
-    cat_weight = CATEGORY_DEFAULT_WEIGHTS.get(category_id)
-    if cat_weight:
-        return cat_weight, "category_default"
+    if category_weight is not None:
+        return category_weight, "category_default"
     return db_default, "category_default"

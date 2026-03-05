@@ -21,16 +21,14 @@ from sqlalchemy import and_, asc, desc, or_, select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db, AsyncSessionLocal
-from backend.models import AuctionItem, GeorgianListing, Opportunity, PriceEstimate, Setting
+from backend.models import AuctionItem, EbayCategory, GeorgianListing, Opportunity, PriceEstimate, Setting
 from backend.services.currency_service import get_usd_gel_rate
-from backend.services.ebay_client import (
-    CATEGORY_MAP, parse_auction_item, search_auction_items
-)
+from backend.services.ebay_client import parse_auction_item, search_auction_items
 from backend.services.opportunity_scorer import score_opportunity
 from backend.services.price_estimator import estimate_final_price
 from backend.services.scraper_orchestrator import scrape_all_platforms
 from backend.utils.shipping import calc_total_landed_cost
-from backend.utils.weight_estimator import resolve_weight
+from backend.utils.weight_estimator import resolve_weight, get_default_weight_async
 
 router = APIRouter()
 
@@ -94,6 +92,8 @@ async def list_auctions(
     order: str = Query("desc"),
     min_profit_pct: Optional[float] = Query(None),
     max_bid_usd: Optional[float] = Query(None),
+    min_budget_usd: Optional[float] = Query(None),
+    max_budget_usd: Optional[float] = Query(None),
     has_georgian_data: Optional[bool] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
@@ -103,6 +103,10 @@ async def list_auctions(
     conditions = [Opportunity.ends_at > now]
     if min_profit_pct is not None:
         conditions.append(Opportunity.profit_margin_pct >= min_profit_pct)
+    if min_budget_usd is not None:
+        conditions.append(Opportunity.total_landed_cost_usd >= min_budget_usd)
+    if max_budget_usd is not None:
+        conditions.append(Opportunity.total_landed_cost_usd <= max_budget_usd)
     if has_georgian_data is True:
         conditions.append(Opportunity.georgian_listing_count > 0)
     elif has_georgian_data is False:
@@ -114,6 +118,7 @@ async def list_auctions(
         "opportunity_score": Opportunity.opportunity_score,
         "profit_margin_pct": Opportunity.profit_margin_pct,
         "current_bid_usd": Opportunity.current_bid_usd,
+        "total_landed_cost_usd": Opportunity.total_landed_cost_usd,
         "ends_at": Opportunity.ends_at,
     }
     sort_col = col_map.get(sort_by, Opportunity.opportunity_score)
@@ -190,7 +195,14 @@ def _build_quality_warning(opp: Opportunity) -> Optional[str]:
 @router.post("/refresh")
 async def start_refresh(category_id: Optional[str] = None):
     if category_id is None:
-        categories = list(CATEGORY_MAP.values())
+        # Get all tracked categories from DB
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(EbayCategory.ebay_category_id).where(EbayCategory.is_tracked == True)
+            )
+            categories = [r[0] for r in result.all()]
+        if not categories:
+            return {"error": "No tracked categories. Track some categories first."}
     else:
         categories = [category_id]
 
@@ -376,7 +388,16 @@ async def _run_refresh(job_id: str, category_ids: list[str]):
             _jobs[job_id] = {"status": "error", "progress": 0, "message": str(e), "scraper_status": {}}
             return
 
-        cat_names = {v: k for k, v in CATEGORY_MAP.items()}
+        # Resolve category names from DB
+        cat_names: dict[str, str] = {}
+        async with AsyncSessionLocal() as db:
+            for cid in category_ids:
+                res = await db.execute(
+                    select(EbayCategory.name).where(EbayCategory.ebay_category_id == cid)
+                )
+                row = res.scalar_one_or_none()
+                cat_names[cid] = row or cid
+
         for cat_idx, cat_id in enumerate(category_ids):
             cat_name = cat_names.get(cat_id, cat_id)
             _jobs[job_id]["message"] = f"[{cat_idx+1}/{total_cats}] Fetching eBay auctions for {cat_name}..."
@@ -479,11 +500,15 @@ async def _run_refresh(job_id: str, category_ids: list[str]):
                                 image_url=gl.image_url,
                                 similarity_score=gl.similarity_score,
                                 price_mismatch=gl.price_mismatch,
+                                view_count=gl.view_count,
+                                order_count=gl.order_count,
                             ))
 
-                        # Scoring
+                        # Scoring — resolve weight via category tree
+                        cat_weight = await get_default_weight_async(cat_id)
                         weight_kg, _ = resolve_weight(
-                            item.weight_kg, item.weight_source, cat_id, db_default=default_weight,
+                            item.weight_kg, item.weight_source, cat_id,
+                            db_default=default_weight, category_weight=cat_weight,
                         )
                         landed = calc_total_landed_cost(
                             est["estimated_final_usd"], weight_kg, shipping_rate, vat_enabled, vat_rate,
@@ -496,11 +521,19 @@ async def _run_refresh(job_id: str, category_ids: list[str]):
                         geo_median_gel = statistics.median(geo_prices_gel) if geo_prices_gel else None
                         geo_median_usd = (geo_median_gel / usd_gel) if geo_median_gel and usd_gel else None
 
+                        # Aggregate demand signals from Georgian listings
+                        view_counts = [gl.view_count for gl in good_listings if gl.view_count is not None]
+                        order_counts = [gl.order_count for gl in good_listings if gl.order_count is not None]
+                        avg_views = statistics.mean(view_counts) if view_counts else None
+                        avg_orders = statistics.mean(order_counts) if order_counts else None
+
                         scores = score_opportunity(
                             est["estimated_final_usd"], landed["total_landed_cost_usd"],
                             geo_median_usd, item.bid_count, est["confidence_score"], item.ends_at,
                             seller_feedback_pct=item.seller_feedback_pct,
                             georgian_listing_count=len(geo_listings),
+                            avg_view_count=avg_views,
+                            avg_order_count=avg_orders,
                         )
 
                         profit_gel = None
@@ -534,6 +567,7 @@ async def _run_refresh(job_id: str, category_ids: list[str]):
                         opp.urgency_score = scores["urgency_score"]
                         opp.confidence_score = scores["confidence_score"]
                         opp.competition_score = scores["competition_score"]
+                        opp.demand_score = scores["demand_score"]
                         opp.opportunity_score = scores["opportunity_score"]
                         opp.gel_rate_used = usd_gel
                         opp.vat_applied = vat_enabled
@@ -615,11 +649,19 @@ async def _rescore_item(item_id: int):
             landed = calc_total_landed_cost(
                 est.estimated_final_usd, item.weight_kg, shipping_rate, vat_enabled, vat_rate,
             )
+            # Aggregate demand signals for re-scoring
+            view_counts = [gl.view_count for gl in good if gl.view_count is not None]
+            order_counts = [gl.order_count for gl in good if gl.order_count is not None]
+            avg_views = statistics.mean(view_counts) if view_counts else None
+            avg_orders = statistics.mean(order_counts) if order_counts else None
+
             scores = score_opportunity(
                 est.estimated_final_usd, landed["total_landed_cost_usd"],
                 geo_median_usd, item.bid_count, est.confidence_score, item.ends_at,
                 seller_feedback_pct=item.seller_feedback_pct,
                 georgian_listing_count=len(geo_listings),
+                avg_view_count=avg_views,
+                avg_order_count=avg_orders,
             )
 
             # Recalculate profit in both currencies (was missing before)
@@ -641,6 +683,7 @@ async def _rescore_item(item_id: int):
             opp.margin_score = scores["margin_score"]
             opp.urgency_score = scores["urgency_score"]
             opp.confidence_score = scores["confidence_score"]
+            opp.demand_score = scores["demand_score"]
             opp.competition_score = scores["competition_score"]
             opp.opportunity_score = scores["opportunity_score"]
             opp.gel_rate_used = usd_gel

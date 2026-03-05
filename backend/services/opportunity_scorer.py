@@ -1,8 +1,9 @@
 """
 Composite opportunity scoring formula.
 
-score (0–100) = (margin_score × 0.45) + (urgency_score × 0.25)
-              + (confidence_score × 0.20) + (competition_score × 0.10)
+score (0–100) = (margin_score × 0.35) + (urgency_score × 0.20)
+              + (demand_score × 0.20) + (confidence_score × 0.15)
+              + (competition_score × 0.10)
 
 confidence_score is adjusted before scoring to account for:
   G1: seller feedback quality  (poor sellers reduce confidence)
@@ -60,6 +61,34 @@ def calc_urgency_score(ends_at: datetime) -> float:
         return 1.0
 
 
+def calc_demand_score(
+    georgian_listing_count: int,
+    avg_view_count: Optional[float] = None,
+    avg_order_count: Optional[float] = None,
+) -> float:
+    """
+    Demand score (0-1) based on Georgian market signals.
+    More listings, views, and orders = higher demand.
+    """
+    # Listing count as base signal: 0=0, 1=0.3, 3=0.6, 5=0.8, 10+=1.0
+    listing_score = min(1.0, georgian_listing_count / 10.0) if georgian_listing_count > 0 else 0.0
+
+    # View count signal (0-1), normalized: 100+ views = 1.0
+    view_score = 0.0
+    if avg_view_count is not None and avg_view_count > 0:
+        view_score = min(1.0, avg_view_count / 100.0)
+
+    # Order/sold count signal (0-1), normalized: 10+ orders = 1.0
+    order_score = 0.0
+    if avg_order_count is not None and avg_order_count > 0:
+        order_score = min(1.0, avg_order_count / 10.0)
+
+    # Weighted combo — use richer signals if available
+    if avg_view_count is not None or avg_order_count is not None:
+        return round(0.4 * listing_score + 0.3 * view_score + 0.3 * order_score, 4)
+    return round(listing_score, 4)
+
+
 def calc_competition_score(bid_count: int) -> float:
     """
     exp(-0.15 × bid_count) → 1.0 at 0 bids, ~0.5 at 5 bids
@@ -72,15 +101,18 @@ def calc_opportunity_score(
     margin_score: float,
     urgency_score: float,
     confidence_score: float,
+    demand_score: float,
     competition_score: float,
 ) -> float:
     """
     Composite score 0–100.
+    Weights: margin 35%, urgency 20%, demand 20%, confidence 15%, competition 10%.
     """
     raw = (
-        margin_score * 0.45
-        + urgency_score * 0.25
-        + confidence_score * 0.20
+        margin_score * 0.35
+        + urgency_score * 0.20
+        + demand_score * 0.20
+        + confidence_score * 0.15
         + competition_score * 0.10
     )
     return round(raw * 100, 2)
@@ -130,6 +162,8 @@ def score_opportunity(
     ends_at: datetime,
     seller_feedback_pct: Optional[float] = None,
     georgian_listing_count: int = 0,
+    avg_view_count: Optional[float] = None,
+    avg_order_count: Optional[float] = None,
 ) -> dict:
     """
     Compute all sub-scores and composite opportunity score.
@@ -146,14 +180,18 @@ def score_opportunity(
 
     margin_score = calc_margin_score(profit_margin_pct)
     urgency_score = calc_urgency_score(ends_at)
+    demand_score = calc_demand_score(georgian_listing_count, avg_view_count, avg_order_count)
     competition_score = calc_competition_score(bid_count)
-    opportunity_score = calc_opportunity_score(margin_score, urgency_score, adjusted_confidence, competition_score)
+    opportunity_score = calc_opportunity_score(
+        margin_score, urgency_score, adjusted_confidence, demand_score, competition_score,
+    )
 
     return {
         "profit_margin_pct": round(profit_margin_pct, 2) if profit_margin_pct is not None else None,
         "margin_score": margin_score,
         "urgency_score": urgency_score,
         "confidence_score": adjusted_confidence,
+        "demand_score": demand_score,
         "competition_score": competition_score,
         "opportunity_score": opportunity_score,
     }

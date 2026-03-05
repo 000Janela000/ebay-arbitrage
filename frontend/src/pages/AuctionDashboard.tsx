@@ -15,7 +15,10 @@ export default function AuctionDashboard() {
   const [filters, setFilters] = useState<Filters>({
     categoryId: initialCategory,
     minProfitPct: '',
+    minProfitUsd: '',
     maxBidUsd: '',
+    minBudgetUsd: '',
+    maxBudgetUsd: '',
     sortBy: 'opportunity_score',
     order: 'desc',
     hasGeorgianData: null,
@@ -38,7 +41,10 @@ export default function AuctionDashboard() {
     order: filters.order,
     ...(filters.categoryId ? { category_id: filters.categoryId } : {}),
     ...(filters.minProfitPct ? { min_profit_pct: Number(filters.minProfitPct) } : {}),
+    ...(filters.minProfitUsd ? { min_profit_usd: Number(filters.minProfitUsd) } : {}),
     ...(filters.maxBidUsd ? { max_bid_usd: Number(filters.maxBidUsd) } : {}),
+    ...(filters.minBudgetUsd ? { min_budget_usd: Number(filters.minBudgetUsd) } : {}),
+    ...(filters.maxBudgetUsd ? { max_budget_usd: Number(filters.maxBudgetUsd) } : {}),
     ...(filters.hasGeorgianData !== null ? { has_georgian_data: filters.hasGeorgianData } : {}),
   })
 
