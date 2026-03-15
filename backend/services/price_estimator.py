@@ -2,6 +2,7 @@
 Auction final price estimator using eBay BIN (Buy It Now) price distribution.
 """
 import statistics
+from datetime import datetime, timedelta
 from typing import Optional
 
 from backend.services.ebay_client import search_bin_prices
@@ -16,8 +17,11 @@ _NOISE_WORDS = {
     'brand', 'only', 'other', 'international', 'worldwide', 'priority', 'no',
 }
 
+_BIN_CACHE_TTL = timedelta(minutes=15)
+_bin_cache: dict[tuple[str, Optional[str], int], tuple[datetime, list[float]]] = {}
 
-def _build_bin_query(title: str) -> str:
+
+def build_bin_query(title: str) -> str:
     """
     G3: Extract meaningful terms from listing title, skipping noise/filler words.
     Takes up to 8 meaningful words — captures brand + model + key specs.
@@ -25,6 +29,20 @@ def _build_bin_query(title: str) -> str:
     words = title.split()
     clean = [w for w in words if w.lower().rstrip('.,!') not in _NOISE_WORDS and len(w) > 1]
     return " ".join(clean[:8])
+
+
+async def _search_bin_prices_cached(query: str, category_id: Optional[str], limit: int) -> list[float]:
+    key = (query.lower(), category_id, limit)
+    now = datetime.utcnow()
+    cached = _bin_cache.get(key)
+    if cached is not None:
+        fetched_at, prices = cached
+        if now - fetched_at <= _BIN_CACHE_TTL:
+            return list(prices)
+
+    prices = await search_bin_prices(query, category_id=category_id, limit=limit)
+    _bin_cache[key] = (now, prices)
+    return list(prices)
 
 
 async def estimate_final_price(
@@ -40,9 +58,9 @@ async def estimate_final_price(
       bin_price_max_usd, estimation_method
     """
     # G3: smarter query — strip noise words, keep up to 8 meaningful terms
-    query = _build_bin_query(title)
+    query = build_bin_query(title)
 
-    bin_prices = await search_bin_prices(query, category_id=category_id, limit=20)
+    bin_prices = await _search_bin_prices_cached(query, category_id=category_id, limit=20)
 
     # B6: outlier filter no longer anchored to current_bid (which can be $1 starting price).
     # Use absolute floor of $1 to drop garbage; apply upper cap only when bid is meaningful

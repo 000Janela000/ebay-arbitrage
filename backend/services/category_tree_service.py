@@ -64,13 +64,11 @@ async def sync_category_tree() -> int:
 
     # Upsert all into DB
     async with AsyncSessionLocal() as db:
+        existing_result = await db.execute(select(EbayCategory))
+        existing_map = {c.ebay_category_id: c for c in existing_result.scalars().all()}
+
         for row in rows:
-            result = await db.execute(
-                select(EbayCategory).where(
-                    EbayCategory.ebay_category_id == row["ebay_category_id"]
-                )
-            )
-            existing = result.scalar_one_or_none()
+            existing = existing_map.get(row["ebay_category_id"])
             if existing is None:
                 cat = EbayCategory(**row)
                 # Apply legacy mappings for known categories
@@ -81,6 +79,7 @@ async def sync_category_tree() -> int:
                 if cat_id in _LEGACY_WEIGHTS:
                     cat.default_weight_kg = _LEGACY_WEIGHTS[cat_id]
                 db.add(cat)
+                existing_map[cat_id] = cat
             else:
                 # Update tree structure but preserve user data
                 existing.name = row["name"]

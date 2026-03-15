@@ -16,6 +16,7 @@ from backend.scrapers.base_scraper import BaseScraper, GeorgianListing
 
 class VeliStoreScraper(BaseScraper):
     platform = "veli"
+    enabled = False
 
     _browser = None
     _playwright = None

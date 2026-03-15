@@ -10,9 +10,9 @@ Monitor eBay USA auctions, compare their projected landed cost in Georgia (inclu
 - **Live Auction Dashboard** — real-time table of active auctions sorted by composite opportunity score
 - **Ending Soon Tab** — auctions grouped into time buckets (< 30 min, 30 m–1 h, 1–2 h, 2–6 h) so you know exactly what needs a bid decision right now
 - **Automatic Price Estimation** — uses eBay BIN listings with noise-filtered queries to project final auction prices
-- **Georgian Market Scrapers** — pulls live prices from mymarket.ge, veli.store, and zoomer.ge
-- **Composite Scoring** — weighs margin, urgency, confidence, and competition into a 0–100 score; confidence is adjusted for seller feedback quality and Georgian data richness
-- **VAT & Shipping** — fully configurable landed cost calculator
+- **Georgian Market Scrapers** - currently pulls live prices from mymarket.ge and extra.ge (disabled sources are skipped automatically)
+- **Composite Scoring** - weighs margin, urgency, demand, confidence, and competition into a 0-100 score
+- **VAT, Shipping & Selling Fees** - configurable landed-cost + net-revenue model
 - **Weight Override** — manually set item weight to recalculate scores
 - **eBay Quota Tracking** — warns when approaching the 5,000/day free API limit
 
@@ -126,8 +126,8 @@ Click **Refresh** on the Auction Dashboard. This:
 
 1. Fetches active eBay auctions ending within 48 h in the selected category
 2. Estimates final auction prices using eBay BIN listings (noise words stripped from queries for better matches)
-3. Scrapes Georgian marketplace prices (mymarket.ge, veli.store, zoomer.ge) with a 30-second timeout per item
-4. Calculates landed cost (item + shipping at $9/kg + optional VAT)
+3. Scrapes Georgian marketplace prices (active sources) with a 30-second timeout per item
+4. Calculates landed cost (item + shipping at $9/kg + optional VAT) and net revenue (after optional selling fees)
 5. Scores and ranks all opportunities on a 0–100 scale
 
 A progress bar shows scraper status per platform.
@@ -145,7 +145,7 @@ A progress bar shows scraper status per platform.
 Click any row to open the **Detail Modal**, which shows:
 - Full cost breakdown (bid + shipping + VAT → landed cost)
 - Georgian listings with similarity scores
-- Score breakdown (margin / urgency / confidence / competition)
+- Score breakdown (margin / urgency / demand / confidence / competition)
 - Confidence adjusted for seller feedback and number of Georgian comparables
 
 Use **Filter Bar** to narrow by category, minimum profit %, maximum bid, or whether Georgian price data exists.
@@ -172,14 +172,16 @@ If you know an item's actual weight (e.g. from the listing description), open th
 ## Opportunity Score Formula
 
 ```
-score (0–100) = (margin_score × 0.45) + (urgency_score × 0.25)
-              + (confidence_score × 0.20) + (competition_score × 0.10)
+score (0-100) = (margin_score x 0.35) + (urgency_score x 0.20)
+              + (demand_score x 0.20) + (confidence_score x 0.15)
+              + (competition_score x 0.10)
 ```
 
 | Sub-score | How it's calculated |
 |---|---|
 | **margin_score** | Logistic sigmoid centered at 30% profit margin |
-| **urgency_score** | Log-scale decay — 0.1 at >48 h, 1.0 at <30 min |
+| **urgency_score** | Log-scale decay - 0.1 at >48 h, 1.0 at <30 min |
+| **demand_score** | Listing/view/order signals from Georgian comparables |
 | **confidence_score** | From price estimator (0.20–0.95), then adjusted (see below) |
 | **competition_score** | `exp(−0.15 × bid_count)` |
 
@@ -268,8 +270,9 @@ GET  /api/opportunities?sort_by=&order=&min_profit_pct=&has_georgian_data=
 
 ## Limitations
 
-- **eBay API**: 5,000 calls/day on the free tier. Each refresh of 50 items uses ~50 BIN search calls for price estimation.
-- **Georgian scrapers**: Site structure changes may require selector updates. Scrapers log raw HTML when selectors fail. Each query times out after 30 seconds so a stuck scraper never blocks a full refresh.
-- **veli.store**: Requires Playwright/Chromium. If unavailable, veli.store results are skipped gracefully.
-- **Price matching**: Georgian listing similarity is keyword-based. Low-confidence matches (score < 0.3) are excluded from price aggregation.
+- **eBay API**: 5,000 calls/day on the free tier. The app caches BIN lookups to reduce repeated calls.
+- **Georgian scrapers**: Site structure changes may require selector updates. Each query times out after 30 seconds so a stuck scraper never blocks a full refresh.
+- **Disabled sources**: Some platforms may be disabled in the current runtime environment and are skipped automatically.
+- **Price matching**: Georgian listing similarity is keyword-based. Low-confidence matches (score < 0.3) are excluded from scoring and confidence.
 - **Exchange rate**: Fetched live from the National Bank of Georgia. If unavailable, GEL→USD conversions are skipped (no hardcoded fallback rate).
+

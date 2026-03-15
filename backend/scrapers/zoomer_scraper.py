@@ -16,6 +16,7 @@ from backend.scrapers.base_scraper import BaseScraper, GeorgianListing
 
 class ZoomerScraper(BaseScraper):
     platform = "zoomer"
+    enabled = False
 
     async def search(self, query: str) -> list[GeorgianListing]:
         # zoomer.ge SSL cert is broken + fully client-side SPA

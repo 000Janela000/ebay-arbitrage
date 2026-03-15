@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Search, ChevronRight, Star, StarOff, FolderOpen, FileText, TrendingUp, TrendingDown, Minus, Sparkles } from 'lucide-react'
 import { clsx } from 'clsx'
+import axios from 'axios'
 import {
   useCategoryChildren,
   useCategoryBreadcrumb,
@@ -34,6 +35,7 @@ export default function CategoryTreeBrowser({ onAnalyze, onDiscoverStarted }: Pr
   const [searchQuery, setSearchQuery] = useState('')
   const [isSearching, setIsSearching] = useState(false)
   const [discoverTarget, setDiscoverTarget] = useState<string | null>(null)
+  const [discoverError, setDiscoverError] = useState<string | null>(null)
 
   const { data: children, isLoading } = useCategoryChildren(currentParentId)
   const { data: breadcrumb } = useCategoryBreadcrumb(currentParentId)
@@ -217,7 +219,7 @@ export default function CategoryTreeBrowser({ onAnalyze, onDiscoverStarted }: Pr
               )}
               {!cat.is_leaf && (
                 <button
-                  onClick={e => { e.stopPropagation(); setDiscoverTarget(cat.ebay_category_id) }}
+                  onClick={e => { e.stopPropagation(); setDiscoverError(null); setDiscoverTarget(cat.ebay_category_id) }}
                   className="px-2 py-1 text-xs bg-purple-900/40 text-purple-400 hover:bg-purple-800/60 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
                   title="Auto-discover all subcategories"
                 >
@@ -276,6 +278,9 @@ export default function CategoryTreeBrowser({ onAnalyze, onDiscoverStarted }: Pr
                 <p className="text-xs text-gray-500">
                   This will track and analyze up to {Math.min(discoverPreview.leaf_count, 200)} leaf categories. Results sorted by profit margin.
                 </p>
+                {discoverError && (
+                  <p className="text-xs text-red-400">{discoverError}</p>
+                )}
               </div>
             ) : (
               <p className="text-sm text-red-400">Failed to load preview</p>
@@ -290,9 +295,17 @@ export default function CategoryTreeBrowser({ onAnalyze, onDiscoverStarted }: Pr
               <button
                 onClick={async () => {
                   if (!discoverTarget) return
-                  const result = await discoverMutation.mutateAsync({ categoryId: discoverTarget })
-                  setDiscoverTarget(null)
-                  onDiscoverStarted?.(result.job_id)
+                  setDiscoverError(null)
+                  try {
+                    const result = await discoverMutation.mutateAsync({ categoryId: discoverTarget })
+                    setDiscoverTarget(null)
+                    onDiscoverStarted?.(result.job_id)
+                  } catch (e) {
+                    const message = axios.isAxiosError(e)
+                      ? (e.response?.data?.detail || e.response?.data?.error || e.message)
+                      : 'Failed to start discovery'
+                    setDiscoverError(String(message))
+                  }
                 }}
                 disabled={previewLoading || !discoverPreview || discoverMutation.isPending}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2 text-sm bg-purple-600 hover:bg-purple-500 rounded-lg font-medium disabled:opacity-50 transition-colors"

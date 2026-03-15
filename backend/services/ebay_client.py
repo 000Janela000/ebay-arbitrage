@@ -18,15 +18,18 @@ EBAY_WARN_THRESHOLD = 200
 
 
 class EbayTokenManager:
-    _token: Optional[str] = None
-    _expires_at: Optional[datetime] = None
+    _token_cache: dict[tuple[str, str], tuple[str, datetime]] = {}
     _lock = asyncio.Lock()
 
     @classmethod
     async def get_token(cls, client_id: str, client_secret: str, base_url: str) -> str:
+        cache_key = (client_id, base_url)
         async with cls._lock:
-            if cls._token and cls._expires_at and datetime.utcnow() < cls._expires_at:
-                return cls._token
+            cached = cls._token_cache.get(cache_key)
+            if cached is not None:
+                token, expires_at = cached
+                if datetime.utcnow() < expires_at:
+                    return token
 
             credentials = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
             async with httpx.AsyncClient() as client:
@@ -41,15 +44,15 @@ class EbayTokenManager:
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                cls._token = data["access_token"]
+                token = data["access_token"]
                 expires_in = int(data.get("expires_in", 7200))
-                cls._expires_at = datetime.utcnow() + timedelta(seconds=expires_in - 60)
-                return cls._token
+                expires_at = datetime.utcnow() + timedelta(seconds=expires_in - 60)
+                cls._token_cache[cache_key] = (token, expires_at)
+                return token
 
     @classmethod
     def invalidate(cls):
-        cls._token = None
-        cls._expires_at = None
+        cls._token_cache.clear()
 
 
 async def _get_credentials() -> tuple[str, str, str]:
@@ -131,6 +134,16 @@ async def browse_search(
             params=params,
             timeout=20,
         )
+        if resp.status_code == 401:
+            # Token can become invalid when credentials/environment changed.
+            EbayTokenManager.invalidate()
+            token = await EbayTokenManager.get_token(client_id, client_secret, base_url)
+            resp = await client.get(
+                f"{base_url}/buy/browse/v1/item_summary/search",
+                headers={"Authorization": f"Bearer {token}", "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"},
+                params=params,
+                timeout=20,
+            )
         resp.raise_for_status()
 
     await _track_api_call(1)
@@ -171,10 +184,59 @@ async def search_bin_prices(query: str, category_id: Optional[str] = None, limit
         return []
 
 
+def _as_float(value: Any) -> Optional[float]:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_price_usd(raw: dict) -> float:
+    """
+    Browse API auction summaries are inconsistent across categories:
+    current bid can appear in `currentBidPrice` or `price`.
+    """
+    price_candidates = [
+        raw.get("currentBidPrice"),
+        raw.get("price"),
+        raw.get("startingBid"),
+        raw.get("bidPrice"),
+    ]
+
+    for candidate in price_candidates:
+        if isinstance(candidate, dict):
+            v = (
+                candidate.get("value")
+                or candidate.get("convertedFromValue")
+                or candidate.get("amount")
+            )
+            fv = _as_float(v)
+            if fv is not None:
+                return max(0.0, fv)
+        else:
+            fv = _as_float(candidate)
+            if fv is not None:
+                return max(0.0, fv)
+    return 0.0
+
+
+def _extract_category_id(raw: dict) -> str:
+    category_id = raw.get("categoryId")
+    if category_id:
+        return str(category_id)
+    categories = raw.get("categories")
+    if isinstance(categories, list) and categories:
+        first = categories[0]
+        if isinstance(first, dict) and first.get("categoryId"):
+            return str(first["categoryId"])
+    return ""
+
+
 def parse_auction_item(raw: dict) -> dict:
     """Parse eBay item summary into our domain model."""
-    price = raw.get("price", {})
-    current_bid = float(price.get("value", 0))
+    current_bid = _extract_price_usd(raw)
 
     # Parse end time
     end_time_str = raw.get("itemEndDate", "")
@@ -213,12 +275,13 @@ def parse_auction_item(raw: dict) -> dict:
     images = raw.get("image", {})
     image_url = images.get("imageUrl")
 
+    bid_count = _as_float(raw.get("bidCount"))
     return {
         "ebay_item_id": raw.get("itemId", ""),
-        "ebay_category_id": raw.get("categoryId", ""),
+        "ebay_category_id": _extract_category_id(raw),
         "title": raw.get("title", ""),
         "current_bid_usd": current_bid,
-        "bid_count": int(raw.get("bidCount", 0)),
+        "bid_count": int(bid_count) if bid_count is not None else 0,
         "condition": raw.get("condition"),
         "item_url": raw.get("itemWebUrl", raw.get("itemHref", "")),
         "image_url": image_url,

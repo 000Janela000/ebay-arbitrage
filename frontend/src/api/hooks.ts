@@ -11,6 +11,9 @@ export interface Settings {
   default_weight_kg: number
   vat_enabled: boolean
   vat_rate: number
+  platform_fee_pct: number
+  payment_fee_pct: number
+  handling_fee_usd: number
 }
 
 export interface Category {
@@ -42,6 +45,8 @@ export interface AuctionOpportunity {
   total_landed_cost_gel: number
   georgian_median_price_gel: number | null
   georgian_median_price_usd: number | null
+  net_revenue_usd: number | null
+  selling_fees_usd: number | null
   georgian_listing_count: number
   profit_margin_pct: number | null
   profit_usd: number | null
@@ -85,7 +90,7 @@ export interface JobStatus {
   status: 'running' | 'done' | 'error'
   progress: number
   message: string
-  scraper_status: Record<string, boolean>
+  scraper_status?: Record<string, boolean>
 }
 
 // Category tree types
@@ -124,6 +129,11 @@ export interface TrackedCategory {
   avg_weight_kg: number | null
   total_active_auctions: number
   last_analyzed_at: string | null
+  manual_pin: boolean
+  manual_block: boolean
+  track_source: 'manual' | 'auto' | 'none'
+  auto_track_score: number | null
+  auto_tracked_at: string | null
 }
 
 export interface TreeMeta {
@@ -159,6 +169,10 @@ export interface AuctionDetail {
   opportunity: {
     total_landed_cost_usd: number
     total_landed_cost_gel: number
+    georgian_median_price_gel: number | null
+    georgian_median_price_usd: number | null
+    net_revenue_usd: number | null
+    selling_fees_usd: number | null
     profit_margin_pct: number | null
     profit_gel: number | null
     profit_usd: number | null
@@ -166,6 +180,7 @@ export interface AuctionDetail {
     margin_score: number
     urgency_score: number
     confidence_score: number
+    demand_score: number | null
     competition_score: number
     shipping_cost_usd: number
     vat_usd: number
@@ -428,6 +443,301 @@ export function useOverrideWeight() {
       qc.invalidateQueries({ queryKey: ['auction-detail', vars.ebayItemId] })
       qc.invalidateQueries({ queryKey: ['opportunities'] })
       qc.invalidateQueries({ queryKey: ['auctions'] })
+    },
+  })
+}
+
+export function usePinCategory() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (categoryId: string) => client.post(`/categories/${categoryId}/pin`).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tracked-categories'] })
+      qc.invalidateQueries({ queryKey: ['category-children'] })
+      qc.invalidateQueries({ queryKey: ['category-search'] })
+      qc.invalidateQueries({ queryKey: ['categories'] })
+    },
+  })
+}
+
+export function useBlockCategory() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (categoryId: string) => client.post(`/categories/${categoryId}/block`).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tracked-categories'] })
+      qc.invalidateQueries({ queryKey: ['category-children'] })
+      qc.invalidateQueries({ queryKey: ['category-search'] })
+      qc.invalidateQueries({ queryKey: ['categories'] })
+    },
+  })
+}
+
+export function useClearCategoryOverride() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (categoryId: string) => client.delete(`/categories/${categoryId}/override`).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tracked-categories'] })
+      qc.invalidateQueries({ queryKey: ['category-children'] })
+      qc.invalidateQueries({ queryKey: ['category-search'] })
+      qc.invalidateQueries({ queryKey: ['categories'] })
+    },
+  })
+}
+
+// Modern hunter types
+export interface ModernSettings {
+  strategy_profile: 'balanced' | 'aggressive' | 'conservative'
+  target_margin_floor_pct: number
+  demand_gate_min_listings: number
+  demand_gate_min_score: number
+  auction_window_min_hours: number
+  auction_window_max_hours: number
+  max_categories_per_refresh: number
+  max_items_per_category: number
+  deep_scrape_top_k: number
+}
+
+export interface ModernOpportunity {
+  ebay_item_id: string
+  title: string
+  image_url: string | null
+  item_url: string
+  current_bid_usd: number
+  estimated_final_usd: number
+  anchor_price_usd: number | null
+  current_discount_pct: number | null
+  projected_discount_pct: number | null
+  steal_score: number
+  winability_score: number
+  demand_gate_passed: boolean
+  gate_reason: string | null
+  final_score: number
+  bid_count: number
+  ends_at: string
+  seconds_remaining: number
+  weight_kg: number
+  weight_source: string
+  shipping_cost_usd: number
+  vat_usd: number
+  total_landed_cost_usd: number
+  total_landed_cost_gel: number
+  georgian_median_price_gel: number | null
+  georgian_median_price_usd: number | null
+  net_revenue_usd: number | null
+  selling_fees_usd: number | null
+  georgian_listing_count: number
+  profit_margin_pct: number | null
+  profit_usd: number | null
+  profit_gel: number | null
+  margin_score: number
+  urgency_score: number
+  confidence_score: number
+  demand_score: number | null
+  competition_score: number
+  ebay_category_id: string
+  has_georgian_data: boolean
+  data_quality_warning: string | null
+}
+
+export interface ModernOpportunitiesResponse {
+  total: number
+  offset: number
+  limit: number
+  items: ModernOpportunity[]
+  api_usage: {
+    calls_made: number
+    remaining: number
+    limit: number
+    warn: boolean
+  }
+}
+
+export interface ModernRefreshStatus {
+  job_id: string
+  status: 'running' | 'done' | 'error'
+  progress: number
+  message: string
+  metrics: Record<string, number>
+  scraper_status: Record<string, boolean>
+}
+
+export interface ModernTrackingSettings {
+  tracking_mode: 'hybrid_auto_manual' | 'auto_only' | 'manual_only'
+  auto_track_enabled: boolean
+  auto_track_max_categories: number
+  auto_track_refresh_hours: number
+  auto_track_min_liquidity: number
+  auto_track_min_score: number
+  focus_policy: 'weekly_winner' | 'per_refresh_winner' | 'mixed_fixed'
+  focus_bucket: 'auto' | 'electronics_small' | 'antiques_decor' | 'mixed'
+  focus_last_decided_at: string
+  realism_max_extreme_margin_pct: number
+  realism_min_positive_discount_share: number
+}
+
+export interface ModernTrackingRecommendation {
+  category_id: string
+  category_name: string
+  is_leaf: boolean
+  is_tracked: boolean
+  source: 'manual' | 'auto' | 'none'
+  category_track_score: number
+  factor_breakdown: {
+    liquidity: number
+    qualification: number
+    comparables: number
+    realism: number
+    stability: number
+    data_health: number
+  }
+  decision: 'track' | 'hold' | 'drop'
+  reasons: string[]
+}
+
+export interface ModernTrackingRecommendationsResponse {
+  focus_bucket: 'electronics_small' | 'antiques_decor' | 'mixed'
+  focus_metrics: Record<string, Record<string, number>>
+  total: number
+  items: ModernTrackingRecommendation[]
+}
+
+export interface ModernTrackingRefreshStatus {
+  job_id: string
+  status: 'running' | 'done' | 'error'
+  progress: number
+  message: string
+  metrics: Record<string, number | string>
+}
+
+export interface ModernTrackingAuditEntry {
+  id: number
+  run_at: string
+  focus_bucket: string
+  category_id: string
+  score: number | null
+  decision: string
+  reasons: Record<string, unknown>
+}
+
+export interface ModernTrackingAuditResponse {
+  total: number
+  items: ModernTrackingAuditEntry[]
+}
+
+export const fetchModernSettings = () =>
+  client.get<ModernSettings>('/modern/settings').then(r => r.data)
+
+export const fetchModernOpportunities = (params: Record<string, unknown> = {}) =>
+  client.get<ModernOpportunitiesResponse>('/modern/opportunities', { params }).then(r => r.data)
+
+export const fetchModernRefreshStatus = (jobId: string) =>
+  client.get<ModernRefreshStatus>('/modern/refresh/status', { params: { job_id: jobId } }).then(r => r.data)
+
+export const fetchModernTrackingSettings = () =>
+  client.get<ModernTrackingSettings>('/modern/tracking/settings').then(r => r.data)
+
+export const fetchModernTrackingRecommendations = (params: Record<string, unknown> = {}) =>
+  client.get<ModernTrackingRecommendationsResponse>('/modern/tracking/recommendations', { params }).then(r => r.data)
+
+export const fetchModernTrackingRefreshStatus = (jobId: string) =>
+  client.get<ModernTrackingRefreshStatus>('/modern/tracking/refresh/status', { params: { job_id: jobId } }).then(r => r.data)
+
+export const fetchModernTrackingAudit = (params: Record<string, unknown> = {}) =>
+  client.get<ModernTrackingAuditResponse>('/modern/tracking/audit', { params }).then(r => r.data)
+
+export function downloadModernCsv(params: Record<string, unknown> = {}) {
+  const query = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') query.set(k, String(v))
+  }
+  const url = `/api/modern/opportunities/export.csv?${query.toString()}`
+  const a = document.createElement('a')
+  a.href = url
+  a.download = ''
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+}
+
+export function useModernSettings() {
+  return useQuery({
+    queryKey: ['modern-settings'],
+    queryFn: fetchModernSettings,
+  })
+}
+
+export function useUpdateModernSettings() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: Partial<ModernSettings>) =>
+      client.put<ModernSettings>('/modern/settings', data).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['modern-settings'] })
+    },
+  })
+}
+
+export function useModernOpportunities(params: Record<string, unknown> = {}) {
+  return useQuery({
+    queryKey: ['modern-opportunities', params],
+    queryFn: () => fetchModernOpportunities(params),
+    refetchInterval: 60_000,
+  })
+}
+
+export function useStartModernRefresh() {
+  return useMutation({
+    mutationFn: (body?: { strategy_profile?: 'balanced' | 'aggressive' | 'conservative' }) =>
+      client.post<{ job_id: string }>('/modern/refresh', body ?? null).then(r => r.data),
+  })
+}
+
+export function useModernTrackingSettings() {
+  return useQuery({
+    queryKey: ['modern-tracking-settings'],
+    queryFn: fetchModernTrackingSettings,
+  })
+}
+
+export function useUpdateModernTrackingSettings() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: Partial<ModernTrackingSettings>) =>
+      client.put<ModernTrackingSettings>('/modern/tracking/settings', data).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['modern-tracking-settings'] })
+      qc.invalidateQueries({ queryKey: ['modern-tracking-recommendations'] })
+    },
+  })
+}
+
+export function useModernTrackingRecommendations(params: Record<string, unknown> = {}) {
+  return useQuery({
+    queryKey: ['modern-tracking-recommendations', params],
+    queryFn: () => fetchModernTrackingRecommendations(params),
+    refetchInterval: 120_000,
+  })
+}
+
+export function useModernTrackingAudit(params: Record<string, unknown> = {}) {
+  return useQuery({
+    queryKey: ['modern-tracking-audit', params],
+    queryFn: () => fetchModernTrackingAudit(params),
+  })
+}
+
+export function useStartModernTrackingRefresh() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body?: { apply_changes?: boolean; force_focus_recompute?: boolean }) =>
+      client.post<{ job_id: string }>('/modern/tracking/refresh', body ?? null).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['modern-tracking-recommendations'] })
+      qc.invalidateQueries({ queryKey: ['modern-tracking-audit'] })
+      qc.invalidateQueries({ queryKey: ['tracked-categories'] })
+      qc.invalidateQueries({ queryKey: ['categories'] })
     },
   })
 }

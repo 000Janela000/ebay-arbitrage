@@ -29,7 +29,10 @@ async def create_tables():
         Category, EbayCategory, CategoryTreeMeta,
         AuctionItem, PriceEstimate,
         GeorgianListing, Opportunity, CurrencyRate,
-        ApiUsage, Setting,
+        ApiUsage, Setting, BackgroundJob,
+        ModernAuctionItem, ModernPriceEstimate, ModernGeorgianListing,
+        ModernOpportunity, ModernBackgroundJob, ModernCategoryRefreshStat,
+        ModernTrackingAudit,
     )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

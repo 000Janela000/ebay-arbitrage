@@ -9,7 +9,15 @@
       "WebFetch(domain:zoomer.ge)",
       "Bash(python:*)",
       "Bash(pip install cloudscraper --quiet)",
-      "Bash(PYTHONIOENCODING=utf-8 python -c \":*)"
+      "Bash(PYTHONIOENCODING=utf-8 python -c \":*)",
+      "Read(//c/Users/user/Desktop/additional-projects/**)",
+      "Read(//c/Users/user/Desktop/playtime/playtime-landing//**)",
+      "Read(//c/Users/user/Desktop/playtime/playtime-marketing//**)",
+      "Read(//c/Users/user/Desktop/playtime/playtime-portal//**)",
+      "Read(//c/Users/user/Desktop/playtime/playtime-backend/**)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\user\\Desktop"
     ]
   }
 }

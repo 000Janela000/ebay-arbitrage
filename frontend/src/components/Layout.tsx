@@ -1,6 +1,6 @@
-import { ReactNode, useState } from 'react'
+﻿import { ReactNode, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { BarChart3, LayoutDashboard, Settings } from 'lucide-react'
+import { BarChart3, LayoutDashboard, Settings, Sparkles } from 'lucide-react'
 import SettingsPanel from './SettingsPanel'
 import { useOpportunities } from '../api/hooks'
 import { clsx } from 'clsx'
@@ -33,12 +33,16 @@ export default function Layout({ children }: Props) {
               <LayoutDashboard size={16} />
               Dashboard
             </NavLink>
+            <NavLink to="/modern" active={location.pathname === '/modern'}>
+              <Sparkles size={16} />
+              Modern Hunter
+            </NavLink>
           </nav>
 
           {/* API quota warning */}
           {usage?.warn && (
             <div className="text-xs bg-yellow-900/60 text-yellow-300 px-3 py-1 rounded-full border border-yellow-700">
-              ⚠ {usage.remaining} eBay API calls left today
+              Warning: {usage.remaining} eBay API calls left today
             </div>
           )}
 

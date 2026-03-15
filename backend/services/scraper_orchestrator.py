@@ -20,6 +20,7 @@ async def scrape_all_platforms(
     ebay_price_usd: float = 0.0,
     ebay_category_id: Optional[str] = None,
     mymarket_cat_ids: Optional[list[int]] = None,
+    allowed_platforms: Optional[list[str]] = None,
 ) -> tuple[list[GeorgianListing], float, dict[str, bool]]:
     """
     Run all scrapers in parallel.
@@ -44,10 +45,10 @@ async def scrape_all_platforms(
             resolved_cats = None
 
     try:
-        results = await asyncio.wait_for(_run_all_scrapers(query, resolved_cats), timeout=30.0)
+        results = await asyncio.wait_for(_run_all_scrapers(query, resolved_cats, allowed_platforms), timeout=30.0)
     except asyncio.TimeoutError:
         print(f"[orchestrator] Scrapers timed out (30s) for query: {query!r}")
-        results = {"mymarket": (False, []), "extra": (False, []), "veli": (False, []), "zoomer": (False, [])}
+        results = {}
 
     scraper_status: dict[str, bool] = {}
     all_listings: list[GeorgianListing] = []
@@ -75,13 +76,26 @@ async def scrape_all_platforms(
 async def _run_all_scrapers(
     query: str,
     mymarket_cat_ids: Optional[list[int]] = None,
+    allowed_platforms: Optional[list[str]] = None,
 ) -> dict[str, tuple[bool, list[GeorgianListing]]]:
-    scraper_map = {
+    scraper_map_all = {
         "mymarket": MymarketScraper(mymarket_cat_ids=mymarket_cat_ids),
         "extra": ExtraScraper(),
         "veli": VeliStoreScraper(),
         "zoomer": ZoomerScraper(),
     }
+
+    # Skip scrapers that are explicitly disabled in the current runtime environment.
+    scraper_map = {
+        name: scraper for name, scraper in scraper_map_all.items()
+        if getattr(scraper, "enabled", True)
+    }
+    if allowed_platforms is not None:
+        allow = {p.lower() for p in allowed_platforms}
+        scraper_map = {name: scraper for name, scraper in scraper_map.items() if name in allow}
+    if not scraper_map:
+        return {}
+
     tasks = {name: scraper.search(query) for name, scraper in scraper_map.items()}
     raw = await asyncio.gather(*tasks.values(), return_exceptions=True)
 

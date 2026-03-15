@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { RefreshCw, LayoutDashboard, Download, WifiOff, CheckCircle, XCircle, Flame } from 'lucide-react'
+import axios from 'axios'
 import OpportunityTable from '../components/OpportunityTable'
 import FilterBar, { type Filters } from '../components/FilterBar'
 import UpcomingEndingsSection from '../components/UpcomingEndingsSection'
@@ -75,11 +76,18 @@ export default function AuctionDashboard() {
   }
 
   const handleRefresh = async () => {
-    setJobStatus(null)
-    const result = await startRefresh.mutateAsync(filters.categoryId || undefined)
-    setJobId(result.job_id)
-    setJobStatus({ status: 'running', progress: 0, message: 'Starting refresh...', scraper_status: {} })
-    startPolling(result.job_id)
+    try {
+      setJobStatus(null)
+      const result = await startRefresh.mutateAsync(filters.categoryId || undefined)
+      setJobId(result.job_id)
+      setJobStatus({ status: 'running', progress: 0, message: 'Starting refresh...', scraper_status: {} })
+      startPolling(result.job_id)
+    } catch (e) {
+      const message = axios.isAxiosError(e)
+        ? (e.response?.data?.detail || e.response?.data?.error || e.message)
+        : 'Failed to start refresh'
+      setJobStatus({ status: 'error', progress: 0, message, scraper_status: {} })
+    }
   }
 
   const handleExportCsv = () => {

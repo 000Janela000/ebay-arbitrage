@@ -21,6 +21,9 @@ export default function SettingsPanel({ open, onClose }: Props) {
     default_weight_kg: 0.5,
     vat_enabled: false,
     vat_rate: 0.18,
+    platform_fee_pct: 0,
+    payment_fee_pct: 0,
+    handling_fee_usd: 0,
   })
   const [showSecret, setShowSecret] = useState(false)
   const [validateStatus, setValidateStatus] = useState<'idle' | 'ok' | 'fail'>('idle')
@@ -36,6 +39,9 @@ export default function SettingsPanel({ open, onClose }: Props) {
         default_weight_kg: settings.default_weight_kg,
         vat_enabled: settings.vat_enabled,
         vat_rate: settings.vat_rate,
+        platform_fee_pct: settings.platform_fee_pct,
+        payment_fee_pct: settings.payment_fee_pct,
+        handling_fee_usd: settings.handling_fee_usd,
       })
     }
   }, [settings])
@@ -154,6 +160,48 @@ export default function SettingsPanel({ open, onClose }: Props) {
                 onChange={e => setForm(f => ({ ...f, default_weight_kg: Number(e.target.value) }))}
                 step="0.1"
                 min="0.1"
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
+              />
+            </div>
+          </div>
+        </section>
+
+        {/* Selling fees */}
+        <section className="mb-6">
+          <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">Selling Fees</h3>
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">Marketplace fee (%)</label>
+              <input
+                type="number"
+                value={form.platform_fee_pct * 100}
+                onChange={e => setForm(f => ({ ...f, platform_fee_pct: Number(e.target.value) / 100 }))}
+                step="0.5"
+                min="0"
+                max="100"
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">Payment processing fee (%)</label>
+              <input
+                type="number"
+                value={form.payment_fee_pct * 100}
+                onChange={e => setForm(f => ({ ...f, payment_fee_pct: Number(e.target.value) / 100 }))}
+                step="0.5"
+                min="0"
+                max="100"
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">Fixed handling fee ($)</label>
+              <input
+                type="number"
+                value={form.handling_fee_usd}
+                onChange={e => setForm(f => ({ ...f, handling_fee_usd: Number(e.target.value) }))}
+                step="0.5"
+                min="0"
                 className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
               />
             </div>

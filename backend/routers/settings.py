@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,6 +22,9 @@ class SettingsResponse(BaseModel):
     default_weight_kg: float = 0.5
     vat_enabled: bool = False
     vat_rate: float = 0.18
+    platform_fee_pct: float = 0.0
+    payment_fee_pct: float = 0.0
+    handling_fee_usd: float = 0.0
 
 
 class SettingsUpdate(BaseModel):
@@ -32,6 +35,27 @@ class SettingsUpdate(BaseModel):
     default_weight_kg: Optional[float] = None
     vat_enabled: Optional[bool] = None
     vat_rate: Optional[float] = None
+    platform_fee_pct: Optional[float] = None
+    payment_fee_pct: Optional[float] = None
+    handling_fee_usd: Optional[float] = None
+
+    @field_validator("shipping_rate_per_kg", "default_weight_kg", "handling_fee_usd")
+    @classmethod
+    def validate_non_negative(cls, v: Optional[float]) -> Optional[float]:
+        if v is None:
+            return v
+        if v < 0:
+            raise ValueError("Value must be non-negative")
+        return v
+
+    @field_validator("vat_rate", "platform_fee_pct", "payment_fee_pct")
+    @classmethod
+    def validate_rate_range(cls, v: Optional[float]) -> Optional[float]:
+        if v is None:
+            return v
+        if v < 0 or v > 1:
+            raise ValueError("Rate must be between 0 and 1")
+        return v
 
 
 class ValidateEbayRequest(BaseModel):
@@ -66,6 +90,9 @@ async def get_settings(db: AsyncSession = Depends(get_db)):
         default_weight_kg=float(s.get("default_weight_kg", "0.5")),
         vat_enabled=s.get("vat_enabled", "false").lower() == "true",
         vat_rate=float(s.get("vat_rate", "0.18")),
+        platform_fee_pct=float(s.get("platform_fee_pct", "0.0")),
+        payment_fee_pct=float(s.get("payment_fee_pct", "0.0")),
+        handling_fee_usd=float(s.get("handling_fee_usd", "0.0")),
     )
 
 
@@ -86,13 +113,19 @@ async def update_settings(body: SettingsUpdate, db: AsyncSession = Depends(get_d
         updates["vat_enabled"] = str(body.vat_enabled).lower()
     if body.vat_rate is not None:
         updates["vat_rate"] = str(body.vat_rate)
+    if body.platform_fee_pct is not None:
+        updates["platform_fee_pct"] = str(body.platform_fee_pct)
+    if body.payment_fee_pct is not None:
+        updates["payment_fee_pct"] = str(body.payment_fee_pct)
+    if body.handling_fee_usd is not None:
+        updates["handling_fee_usd"] = str(body.handling_fee_usd)
 
     for key, value in updates.items():
         await _upsert_setting(db, key, value)
     await db.commit()
 
     # Invalidate eBay token if credentials changed
-    if "ebay_client_id" in updates or "ebay_client_secret" in updates:
+    if "ebay_client_id" in updates or "ebay_client_secret" in updates or "ebay_environment" in updates:
         from backend.services.ebay_client import EbayTokenManager
         EbayTokenManager.invalidate()
 

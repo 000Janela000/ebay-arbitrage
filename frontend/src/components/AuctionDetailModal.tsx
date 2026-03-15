@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { X, ExternalLink, Scale, TrendingUp, Clock, Users, AlertTriangle } from 'lucide-react'
+import { X, ExternalLink, Scale, TrendingUp, Clock, Users, AlertTriangle, ShoppingBag } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useAuctionDetail, useOverrideWeight } from '../api/hooks'
 
@@ -103,6 +103,15 @@ export default function AuctionDetailModal({ ebayItemId, onClose }: Props) {
                   {data.opportunity.vat_usd > 0 && (
                     <Row label="VAT" value={`$${data.opportunity.vat_usd.toFixed(2)}`} />
                   )}
+                  {data.opportunity.georgian_median_price_usd != null && (
+                    <Row label="Georgian median (gross)" value={`$${data.opportunity.georgian_median_price_usd.toFixed(2)}`} />
+                  )}
+                  {data.opportunity.selling_fees_usd != null && (
+                    <Row label="Selling fees" value={`$${data.opportunity.selling_fees_usd.toFixed(2)}`} />
+                  )}
+                  {data.opportunity.net_revenue_usd != null && (
+                    <Row label="Net revenue" value={`$${data.opportunity.net_revenue_usd.toFixed(2)}`} />
+                  )}
                   <div className="border-t border-gray-700 pt-2 mt-2">
                     <Row
                       label="Total Landed Cost"
@@ -151,9 +160,10 @@ export default function AuctionDetailModal({ ebayItemId, onClose }: Props) {
                   Opportunity Score: <span className="text-blue-400 font-mono">{data.opportunity.opportunity_score.toFixed(1)}/100</span>
                 </h3>
                 <div className="bg-gray-800/50 rounded-xl p-4 space-y-3">
-                  <ScoreBar label="Margin (45%)" score={data.opportunity.margin_score} icon={TrendingUp} color="bg-green-700/20 text-green-400" />
-                  <ScoreBar label="Urgency (25%)" score={data.opportunity.urgency_score} icon={Clock} color="bg-orange-700/20 text-orange-400" />
-                  <ScoreBar label="Confidence (20%)" score={data.opportunity.confidence_score} icon={Scale} color="bg-blue-700/20 text-blue-400" />
+                  <ScoreBar label="Margin (35%)" score={data.opportunity.margin_score} icon={TrendingUp} color="bg-green-700/20 text-green-400" />
+                  <ScoreBar label="Urgency (20%)" score={data.opportunity.urgency_score} icon={Clock} color="bg-orange-700/20 text-orange-400" />
+                  <ScoreBar label="Demand (20%)" score={data.opportunity.demand_score ?? 0} icon={ShoppingBag} color="bg-cyan-700/20 text-cyan-400" />
+                  <ScoreBar label="Confidence (15%)" score={data.opportunity.confidence_score} icon={Scale} color="bg-blue-700/20 text-blue-400" />
                   <ScoreBar label="Low Competition (10%)" score={data.opportunity.competition_score} icon={Users} color="bg-purple-700/20 text-purple-400" />
                 </div>
               </section>

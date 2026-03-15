@@ -1,6 +1,11 @@
-import { TrendingUp, TrendingDown, Minus, ShoppingBag, BarChart2, LayoutDashboard, StarOff } from 'lucide-react'
+﻿import { TrendingUp, TrendingDown, Minus, ShoppingBag, BarChart2, LayoutDashboard, Star, Ban, RotateCcw } from 'lucide-react'
 import { clsx } from 'clsx'
-import { useUntrackCategory, type TrackedCategory } from '../api/hooks'
+import {
+  usePinCategory,
+  useBlockCategory,
+  useClearCategoryOverride,
+  type TrackedCategory,
+} from '../api/hooks'
 
 interface Props {
   category: TrackedCategory
@@ -9,10 +14,10 @@ interface Props {
 }
 
 function MarginBadge({ pct }: { pct: number | null }) {
-  if (pct === null) return <span className="text-xs text-gray-500 px-2 py-0.5 rounded-full bg-gray-800">—</span>
+  if (pct === null) return <span className="text-xs text-gray-500 px-2 py-0.5 rounded-full bg-gray-800">-</span>
   const cls = pct >= 30 ? 'bg-green-900/60 text-green-400 border-green-800'
     : pct >= 15 ? 'bg-yellow-900/60 text-yellow-400 border-yellow-800'
-    : 'bg-red-900/60 text-red-400 border-red-800'
+      : 'bg-red-900/60 text-red-400 border-red-800'
   const Icon = pct >= 30 ? TrendingUp : pct >= 0 ? Minus : TrendingDown
   return (
     <span className={clsx('flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border', cls)}>
@@ -22,12 +27,27 @@ function MarginBadge({ pct }: { pct: number | null }) {
   )
 }
 
+function SourceBadge({ category }: { category: TrackedCategory }) {
+  if (category.manual_pin) {
+    return <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-900/40 text-blue-300 border border-blue-700">Manual Pin</span>
+  }
+  if (category.manual_block) {
+    return <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-900/40 text-red-300 border border-red-700">Manual Block</span>
+  }
+  if (category.track_source === 'auto') {
+    return <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-900/40 text-cyan-300 border border-cyan-700">Auto</span>
+  }
+  return <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-800 text-gray-400 border border-gray-700">None</span>
+}
+
 export default function TrackedCategoryCard({ category, onAnalyze, onViewDashboard }: Props) {
-  const untrack = useUntrackCategory()
+  const pin = usePinCategory()
+  const block = useBlockCategory()
+  const clearOverride = useClearCategoryOverride()
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 hover:border-gray-700 transition-all group">
-      <div className="flex items-start justify-between mb-1">
+      <div className="flex items-start justify-between mb-1 gap-2">
         <div className="min-w-0 flex-1">
           <h3 className="font-semibold text-gray-100 text-sm truncate">
             {category.name}
@@ -37,6 +57,15 @@ export default function TrackedCategoryCard({ category, onAnalyze, onViewDashboa
           </p>
         </div>
         <MarginBadge pct={category.avg_profit_margin_pct} />
+      </div>
+
+      <div className="mb-3 flex items-center gap-2 flex-wrap">
+        <SourceBadge category={category} />
+        {category.auto_track_score != null && (
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-800 text-gray-300 border border-gray-700">
+            Score {(category.auto_track_score * 100).toFixed(0)}
+          </span>
+        )}
       </div>
 
       {category.total_active_auctions > 0 && (
@@ -50,19 +79,19 @@ export default function TrackedCategoryCard({ category, onAnalyze, onViewDashboa
         <div>
           <p className="text-gray-500 mb-0.5">eBay avg</p>
           <p className="font-mono text-gray-200">
-            {category.avg_ebay_sold_usd != null ? `$${category.avg_ebay_sold_usd.toFixed(2)}` : '—'}
+            {category.avg_ebay_sold_usd != null ? `$${category.avg_ebay_sold_usd.toFixed(2)}` : '-'}
           </p>
         </div>
         <div>
           <p className="text-gray-500 mb-0.5">Georgian avg</p>
           <p className="font-mono text-gray-200">
-            {category.avg_georgian_price_usd != null ? `$${category.avg_georgian_price_usd.toFixed(2)}` : '—'}
+            {category.avg_georgian_price_usd != null ? `$${category.avg_georgian_price_usd.toFixed(2)}` : '-'}
           </p>
         </div>
         <div>
           <p className="text-gray-500 mb-0.5">Weight</p>
           <p className="font-mono text-gray-200">
-            {category.avg_weight_kg != null ? `${category.avg_weight_kg}kg` : '—'}
+            {category.avg_weight_kg != null ? `${category.avg_weight_kg}kg` : '-'}
           </p>
         </div>
         <div>
@@ -75,7 +104,7 @@ export default function TrackedCategoryCard({ category, onAnalyze, onViewDashboa
         </div>
       </div>
 
-      <div className="flex items-center gap-2 pt-2 border-t border-gray-800">
+      <div className="flex items-center gap-2 pt-2 border-t border-gray-800 flex-wrap">
         <button
           onClick={onViewDashboard}
           className="flex items-center gap-1 px-2.5 py-1.5 text-xs bg-gray-800 hover:bg-gray-700 rounded-lg text-gray-300 transition-colors"
@@ -90,13 +119,35 @@ export default function TrackedCategoryCard({ category, onAnalyze, onViewDashboa
           <BarChart2 size={12} />
           Analyze
         </button>
+
         <button
-          onClick={() => untrack.mutate(category.ebay_category_id)}
-          className="ml-auto p-1.5 text-gray-600 hover:text-red-400 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
-          title="Untrack"
+          onClick={() => pin.mutate(category.ebay_category_id)}
+          className="flex items-center gap-1 px-2.5 py-1.5 text-xs bg-green-900/40 hover:bg-green-800/60 rounded-lg text-green-300 transition-colors"
+          title="Manual pin"
         >
-          <StarOff size={13} />
+          <Star size={12} />
+          Pin
         </button>
+
+        <button
+          onClick={() => block.mutate(category.ebay_category_id)}
+          className="flex items-center gap-1 px-2.5 py-1.5 text-xs bg-red-900/40 hover:bg-red-800/60 rounded-lg text-red-300 transition-colors"
+          title="Manual block"
+        >
+          <Ban size={12} />
+          Block
+        </button>
+
+        {(category.manual_pin || category.manual_block) && (
+          <button
+            onClick={() => clearOverride.mutate(category.ebay_category_id)}
+            className="ml-auto flex items-center gap-1 px-2.5 py-1.5 text-xs bg-gray-800 hover:bg-gray-700 rounded-lg text-gray-300 transition-colors"
+            title="Clear override"
+          >
+            <RotateCcw size={12} />
+            Clear
+          </button>
+        )}
       </div>
     </div>
   )

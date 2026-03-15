@@ -18,16 +18,38 @@ from backend.database import get_db, AsyncSessionLocal
 from backend.models import AuctionItem, EbayCategory, CategoryTreeMeta
 from backend.services.category_tree_service import (
     get_children, get_child_counts, get_ancestors, search_categories,
-    get_tracked_categories, set_tracked, resolve_mymarket_cats,
+    get_tracked_categories, resolve_mymarket_cats,
     sync_category_tree, get_category_by_id, get_leaf_descendants,
     count_leaf_descendants,
 )
 from backend.services.currency_service import get_usd_gel_rate
 from backend.services.ebay_client import search_bin_prices
+from backend.services.job_store import get_job as get_persisted_job
+from backend.services.job_store import upsert_job
 
 router = APIRouter()
 
 _jobs: dict[str, dict] = {}
+_JOB_TYPE = "categories_analysis"
+
+
+async def _persist_job(job_id: str):
+    job = _jobs.get(job_id)
+    if not job:
+        return
+    await upsert_job(
+        job_id=job_id,
+        job_type=_JOB_TYPE,
+        status=job.get("status", "running"),
+        progress=int(job.get("progress", 0)),
+        message=job.get("message", ""),
+        payload={},
+    )
+
+
+async def _set_job(job_id: str, status: str, progress: int, message: str):
+    _jobs[job_id] = {"status": status, "progress": max(0, min(100, int(progress))), "message": message}
+    await _persist_job(job_id)
 
 
 # ---------- DTOs ----------
@@ -67,6 +89,11 @@ class TrackedCategoryDTO(BaseModel):
     avg_weight_kg: Optional[float]
     total_active_auctions: int
     last_analyzed_at: Optional[datetime]
+    manual_pin: bool
+    manual_block: bool
+    track_source: str
+    auto_track_score: Optional[float]
+    auto_tracked_at: Optional[datetime]
 
 
 class TreeMetaDTO(BaseModel):
@@ -188,24 +215,85 @@ async def list_tracked():
             avg_weight_kg=cat.avg_weight_kg,
             total_active_auctions=cat.total_active_auctions or 0,
             last_analyzed_at=cat.last_analyzed_at,
+            manual_pin=bool(cat.manual_pin),
+            manual_block=bool(cat.manual_block),
+            track_source=cat.track_source or "none",
+            auto_track_score=cat.auto_track_score,
+            auto_tracked_at=cat.auto_tracked_at,
         ))
 
     return results
 
 
+async def _apply_tracking_override(category_id: str, mode: str) -> bool:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(EbayCategory).where(EbayCategory.ebay_category_id == category_id)
+        )
+        cat = result.scalar_one_or_none()
+        if cat is None:
+            return False
+
+        if mode == "pin":
+            cat.manual_pin = True
+            cat.manual_block = False
+            cat.is_tracked = True
+            cat.track_source = "manual"
+        elif mode == "block":
+            cat.manual_pin = False
+            cat.manual_block = True
+            cat.is_tracked = False
+            cat.track_source = "manual"
+        elif mode == "clear":
+            cat.manual_pin = False
+            cat.manual_block = False
+            # Do not force is_tracked here; advisor decides when auto mode runs.
+            if cat.track_source == "manual":
+                cat.track_source = "none"
+        else:
+            raise ValueError(f"Unknown override mode: {mode}")
+
+        await db.commit()
+        return True
+
+
 @router.post("/{category_id}/track")
 async def track_category(category_id: str):
-    """Mark a category as tracked."""
-    found = await set_tracked(category_id, True)
+    """Legacy alias: track maps to manual pin."""
+    found = await _apply_tracking_override(category_id, "pin")
+    if not found:
+        raise HTTPException(status_code=404, detail="Category not found")
+    return {"ok": True, "mode": "pin"}
+
+
+@router.delete("/{category_id}/track")
+async def untrack_category(category_id: str):
+    """Legacy alias: untrack maps to manual block."""
+    found = await _apply_tracking_override(category_id, "block")
+    if not found:
+        raise HTTPException(status_code=404, detail="Category not found")
+    return {"ok": True, "mode": "block"}
+
+
+@router.post("/{category_id}/pin")
+async def pin_category(category_id: str):
+    found = await _apply_tracking_override(category_id, "pin")
     if not found:
         raise HTTPException(status_code=404, detail="Category not found")
     return {"ok": True}
 
 
-@router.delete("/{category_id}/track")
-async def untrack_category(category_id: str):
-    """Untrack a category."""
-    found = await set_tracked(category_id, False)
+@router.post("/{category_id}/block")
+async def block_category(category_id: str):
+    found = await _apply_tracking_override(category_id, "block")
+    if not found:
+        raise HTTPException(status_code=404, detail="Category not found")
+    return {"ok": True}
+
+
+@router.delete("/{category_id}/override")
+async def clear_category_override(category_id: str):
+    found = await _apply_tracking_override(category_id, "clear")
     if not found:
         raise HTTPException(status_code=404, detail="Category not found")
     return {"ok": True}
@@ -222,6 +310,7 @@ async def analyze_single_category(category_id: str):
 
     job_id = str(uuid.uuid4())
     _jobs[job_id] = {"status": "running", "progress": 0, "message": f"Analyzing {cat.name}..."}
+    await _persist_job(job_id)
     asyncio.create_task(_run_single_analysis(job_id, category_id, cat.name))
     return {"job_id": job_id}
 
@@ -235,6 +324,7 @@ async def analyze_all_tracked():
 
     job_id = str(uuid.uuid4())
     _jobs[job_id] = {"status": "running", "progress": 0, "message": "Starting analysis..."}
+    await _persist_job(job_id)
     asyncio.create_task(_run_batch_analysis(job_id, [(c.ebay_category_id, c.name) for c in cats]))
     return {"job_id": job_id}
 
@@ -243,6 +333,14 @@ async def analyze_all_tracked():
 async def analyze_status(job_id: str = Query(...)):
     job = _jobs.get(job_id)
     if not job:
+        persisted = await get_persisted_job(job_id)
+        if persisted:
+            return JobStatus(
+                job_id=job_id,
+                status=persisted["status"],
+                progress=persisted["progress"],
+                message=persisted["message"],
+            )
         return JobStatus(job_id=job_id, status="error", progress=0, message="Job not found")
     return JobStatus(job_id=job_id, **job)
 
@@ -295,7 +393,10 @@ async def discover_subcategories(
             )
             cat_row = result.scalar_one_or_none()
             if cat_row:
+                cat_row.manual_pin = False
+                cat_row.manual_block = False
                 cat_row.is_tracked = True
+                cat_row.track_source = "auto"
         await db.commit()
 
     job_id = str(uuid.uuid4())
@@ -305,6 +406,7 @@ async def discover_subcategories(
         "progress": 0,
         "message": f"Discovering {len(leaves)} subcategories under {cat.name}...",
     }
+    await _persist_job(job_id)
     asyncio.create_task(_run_batch_analysis(job_id, cat_pairs))
     return {"job_id": job_id, "leaf_count": len(leaves)}
 
@@ -316,6 +418,7 @@ async def trigger_tree_sync():
     """Re-fetch the category tree from eBay Taxonomy API."""
     job_id = str(uuid.uuid4())
     _jobs[job_id] = {"status": "running", "progress": 0, "message": "Fetching category tree..."}
+    await _persist_job(job_id)
     asyncio.create_task(_run_tree_sync(job_id))
     return {"job_id": job_id}
 
@@ -372,15 +475,13 @@ async def list_categories_legacy(
 async def _run_single_analysis(job_id: str, category_id: str, category_name: str):
     """Analyze a single category: 1 eBay API call + Georgian scraping."""
     try:
-        _jobs[job_id]["message"] = f"Fetching eBay prices for {category_name}..."
-        _jobs[job_id]["progress"] = 10
+        await _set_job(job_id, "running", 10, f"Fetching eBay prices for {category_name}...")
 
         # eBay BIN prices — use category name as query
         ebay_prices = await search_bin_prices(category_name, category_id=category_id, limit=20)
         avg_ebay = statistics.median(ebay_prices) if len(ebay_prices) >= 3 else None
 
-        _jobs[job_id]["message"] = f"Scraping Georgian prices for {category_name}..."
-        _jobs[job_id]["progress"] = 40
+        await _set_job(job_id, "running", 40, f"Scraping Georgian prices for {category_name}...")
 
         # Georgian prices — use inherited mymarket mapping
         geo_prices_gel, usd_gel = await _sample_georgian_prices(category_id, category_name)
@@ -391,7 +492,7 @@ async def _run_single_analysis(job_id: str, category_id: str, category_name: str
         if avg_ebay and avg_geo_usd:
             margin = (avg_geo_usd - avg_ebay) / avg_ebay * 100
 
-        _jobs[job_id]["progress"] = 80
+        await _set_job(job_id, "running", 80, f"Saving analysis for {category_name}...")
 
         # Save results
         async with AsyncSessionLocal() as db:
@@ -417,9 +518,9 @@ async def _run_single_analysis(job_id: str, category_id: str, category_name: str
 
                 await db.commit()
 
-        _jobs[job_id] = {"status": "done", "progress": 100, "message": f"Analysis complete for {category_name}"}
+        await _set_job(job_id, "done", 100, f"Analysis complete for {category_name}")
     except Exception as e:
-        _jobs[job_id] = {"status": "error", "progress": 0, "message": str(e)}
+        await _set_job(job_id, "error", 0, str(e))
 
 
 async def _run_batch_analysis(job_id: str, categories: list[tuple[str, str]]):
@@ -428,8 +529,7 @@ async def _run_batch_analysis(job_id: str, categories: list[tuple[str, str]]):
     try:
         for i, (cat_id, cat_name) in enumerate(categories):
             pct = int((i / total) * 100)
-            _jobs[job_id]["message"] = f"[{i+1}/{total}] Analyzing {cat_name}..."
-            _jobs[job_id]["progress"] = pct
+            await _set_job(job_id, "running", pct, f"[{i+1}/{total}] Analyzing {cat_name}...")
             print(f"[categories] [{i+1}/{total}] Analyzing {cat_name} (cat_id={cat_id})...")
 
             try:
@@ -470,9 +570,9 @@ async def _run_batch_analysis(job_id: str, categories: list[tuple[str, str]]):
 
             await asyncio.sleep(0.5)
 
-        _jobs[job_id] = {"status": "done", "progress": 100, "message": "Analysis complete"}
+        await _set_job(job_id, "done", 100, "Analysis complete")
     except Exception as e:
-        _jobs[job_id] = {"status": "error", "progress": 0, "message": str(e)}
+        await _set_job(job_id, "error", 0, str(e))
 
 
 async def _sample_georgian_prices(category_id: str, category_name: str) -> tuple[list[float], Optional[float]]:
@@ -519,8 +619,8 @@ async def _sample_georgian_prices(category_id: str, category_name: str) -> tuple
 async def _run_tree_sync(job_id: str):
     """Background job to sync the category tree."""
     try:
-        _jobs[job_id]["message"] = "Fetching category tree from eBay..."
+        await _set_job(job_id, "running", 0, "Fetching category tree from eBay...")
         count = await sync_category_tree()
-        _jobs[job_id] = {"status": "done", "progress": 100, "message": f"Synced {count} categories"}
+        await _set_job(job_id, "done", 100, f"Synced {count} categories")
     except Exception as e:
-        _jobs[job_id] = {"status": "error", "progress": 0, "message": str(e)}
+        await _set_job(job_id, "error", 0, str(e))
